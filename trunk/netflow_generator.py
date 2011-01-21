@@ -71,7 +71,9 @@ def sigBreak(signum, f):
     raise Signalled
 
 class Netflow_Generator(Thread):
-    def __init__(self, nw, delta, interval, host, port):
+    def __init__(self, nw, delta=1, interval=1, host='127.0.0.1', port=9996):
+        # delta => subnet (1=/24, 2=/16, 3=/8)
+        # interval : sleeping time
         threading.Thread.__init__(self)
         self.nw = nw
         self.delta = delta
@@ -123,7 +125,7 @@ class Netflow_Generator(Thread):
             self.sock.sendto(packet.pack(),(self.host, self.port))
             debug("count:%d KBps:%s" % (count, total_bytes / 1000), "Send")
             count = count + 1
-            #time.sleep(1)
+            time.sleep(self.interval)
 
     def make_record(self, sip,dip, uptime):
         pcount = random.randint(1,MAX_PCOUNT)
@@ -164,7 +166,7 @@ def random_ip_gen(ip, subnet):
 def startAnalyzer():
     # start threads
     # new
-    thr_netflow_generator = Netflow_Generator("220.123.31.0",1,1,"125.144.34.3", 9996)
+    thr_netflow_generator = Netflow_Generator("220.123.31.0",1,1,"127.0.0.0", 9996)
 
     # start Thread first
     thr_netflow_generator.start()
