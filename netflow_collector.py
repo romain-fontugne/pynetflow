@@ -25,7 +25,7 @@ network = []          # [(nw1,subnet1), (nw2,subnet2) ...]
 verbose = False
 repos = "/tmp/pynetflow"
 BACKUP_PERIOD = 3600  # BACKUP TIME after last backup (second)
-SAVE_PERIOD = 7200    # SAVE Data, during SAVE_PERIOD (second)
+SAVE_PERIOD = 3600    # SAVE Data, during SAVE_PERIOD (second)
 SIZE_OF_HEADER = 24   # Netflow v5 header size
 SIZE_OF_RECORD = 48   # Netflow v5 record size
 ONEDAY_SECOND = 86400 # 60 second * 60 minute * 24 hours
@@ -132,6 +132,10 @@ class Netflow_Analyzer(Thread):
                 # Find timeline
                 (timeline_index, stime) = self.getTimeline(flow['stime'], header['SysUpTime'], header['EpochSeconds'])
 
+                # TEST
+                if timeline_index > NUM_OF_TIMELINE_INDEX:
+                    debug(timeline_index, "Timeline Index Overflow")
+
                 # Find link
                 links = timeline[timeline_index]
                 debug(timeline_index, "Timeline index")
@@ -148,7 +152,8 @@ class Netflow_Analyzer(Thread):
         header = {}
         header['SysUpTime'] = socket.ntohl(struct.unpack('I',packet[4:8])[0])
         # fix time to localtime zone
-        header['EpochSeconds'] = socket.ntohl(struct.unpack('I',packet[8:12])[0]) - (time.timezone)
+        #header['EpochSeconds'] = socket.ntohl(struct.unpack('I',packet[8:12])[0]) - (time.timezone)
+        header['EpochSeconds'] = socket.ntohl(struct.unpack('I',packet[8:12])[0])
 
         
         return (header,packet[SIZE_OF_HEADER:])
@@ -212,7 +217,7 @@ class Backup_Manager(Thread):
             debug(current_timeline_index, "Current timeline index")
             # after wake up, start backup
             for network in DataStructure.keys():
-                slot = DataStructure[network]
+                (slot,subnet) = DataStructure[network]
                 # check cti, bti
                 if current_timeline_index < self.backup_timeline_index:
                     current_timeline_index = current_timeline_index + NUM_OF_TIMELINE_INDEX
@@ -224,19 +229,19 @@ class Backup_Manager(Thread):
                     filename = "%s/%s_%s" % (repos, self.get_time(self.backup_timeline_index), socket.inet_ntoa(network))
                     debug(filename, "Open file to backup")
                     fp = open(filename,'w')
-                    for slot_index in slot.keys():
+                    for timeline in slot:
                         # backup for each timeline
-                        timeline = slot[slot_index]
                         self.backup(timeline, self.backup_timeline_index, fp)
                     # close file for network
                     fp.close()
                     # update backup_timeline_index
                     self.backup_timeline_index = update_timeline_index
+                    update_timeline_index = self.backup_timeline_index + (BACKUP_PERIOD / (5*60))
 
     def backup(self, timeline, bti, fp, delta=12):
         # backup data in timeline (up, down link)
         for index in range(delta):
-            (uplink, downlink) = timeline[bti+index]
+            (uplink, downlink) = timeline[(bti+index)%NUM_OF_TIMELINE_INDEX]
             r_uplink = self.get_flow_t(uplink, UPLINK)
             r_downlink = self.get_flow_t(downlink, DOWNLINK)
             fp.write(r_uplink)
