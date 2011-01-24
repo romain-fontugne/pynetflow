@@ -166,7 +166,7 @@ def random_ip_gen(ip, subnet):
 def startAnalyzer():
     # start threads
     # new
-    thr_netflow_generator = Netflow_Generator("220.123.31.0",1,1,"127.0.0.0", 9996)
+    thr_netflow_generator = Netflow_Generator("220.123.31.0",1,1,"127.0.0.1", 9996)
 
     # start Thread first
     thr_netflow_generator.start()
