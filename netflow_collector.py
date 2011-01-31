@@ -15,6 +15,7 @@ import threading
 import signal
 import struct
 import SocketServer
+import pickle                  # for dump & load (recovery process)
 
 from threading import Thread
 from optparse import OptionParser
@@ -33,6 +34,7 @@ ONEDAY_SECOND = 86400 # 60 second * 60 minute * 24 hours
 NUM_OF_TIMELINE_INDEX = 288     # 5 minute slot (86400 / 60*5)
 UPLINK = 0            # UPLINK of timeline 
 DOWNLINK = 1          # DOWNLINK of timeline
+dump_file = "/tmp/pynetflow.pkl"
 
 NETMASK = {0: socket.inet_aton("255.255.255.255"),
            8: socket.inet_aton("0.255.255.255"),
@@ -59,8 +61,7 @@ def debug(value, comment='', tag="None"):
 
 class Signalled(Exception):
     # Finalize queue_netflow
-    debug("Finalize queue_netflow")
-    #queue_netflow.put(False)
+    debug("Signalled occured", tag="signal")
 
 
 def sigBreak(signum, f):
@@ -68,6 +69,7 @@ def sigBreak(signum, f):
     LOCK.acquire()
     STOP = 1
     LOCK.release()
+    debug("Raise Signalled", tag="signal")
     raise Signalled
 
 class Netflow_Parser(SocketServer.BaseRequestHandler):
@@ -108,6 +110,10 @@ class Netflow_Analyzer(Thread):
         global queue_netflow
         while STOP == 0:
             data = queue_netflow.get()
+            # Check of signal
+            if data == False:
+                # end of process (signalled)
+                return
             (header, records) = self.parseNetflow5Packet(data)
             for index in range(len(records) / SIZE_OF_RECORD):
                 start = index * SIZE_OF_RECORD
@@ -253,7 +259,9 @@ class Backup_Manager(Thread):
                     self.backup_timeline_index = (update_timeline_index % NUM_OF_TIMELINE_INDEX)
                     update_timeline_index = self.backup_timeline_index + (BACKUP_PERIOD / (5*60))
 
+            debug("Before Sleep", tag="signal")
             time.sleep(BACKUP_PERIOD)
+            debug("After Sleep", tag="signal")
             
     def backup(self, timeline, bti, fp, delta=12):
         # backup data in timeline (up, down link)
@@ -307,7 +315,7 @@ class Console_Manager(Thread):
 
     def plot(self, ip):
         # plot graph of ip
-        import matplotlib.pyplot as plt
+
         nip = socket.inet_aton(ip)
         timeline = getTimeline(nip)
         if timeline == False:
@@ -319,10 +327,15 @@ class Console_Manager(Thread):
         for (uplink, downlink) in timeline:
             d_uplink.append(getBytesFromLink(uplink)/1000)
             d_downlink.append(0 - getBytesFromLink(downlink)/1000)
-        plt.plot(d_uplink)
-        plt.plot(d_downlink)
-        plt.ylabel('UPLINK')
-        plt.show()
+        try:
+            import matplotlib.pyplot as plt
+            plt.plot(d_uplink)
+            plt.plot(d_downlink)
+            plt.ylabel('UPLINK')
+            plt.show()
+        except:
+            print "Uplink", d_uplink
+            print "Downlink", d_downlink
 
 
 def startAnalyzer():
@@ -350,23 +363,46 @@ def startAnalyzer():
         netflow_parser.serve_forever()
         signal.pause()
     except Signalled:
-        netflow_parser.socket.close()
+        #netflow_parser.socket.close()
+        debug("exept Singall 1", tag="signal")
+        netflow_parser.server_close()
+        debug("except Signall 2" , "server_close", tag="signal")
+        
         # send Null data to Queue for last computation of queue_netflow
-        queue_netflow.put("Finish Singal from Keyborad")
-
+        queue_netflow.put(False)
+        debug("except signall 3", "end of queue", tag="signal")
+        
     # join
-    debug("wait Before Join")
+    debug("wait Before Join", tag="signal")
     thr_netflow_analyzer.join()
-    thr_backup_manager.join()
-    thr_console_manager.join()
-    debug("finish join")
+    debug("thr_netflow_analyzer joined", tag="signal")
 
-def initDataStructure():
+
+    thr_console_manager.join(timeout=10)
+    debug("thr_console_manager joined", tag="signal")
+
+    thr_backup_manager.join(timeout=10)    
+    debug("thr_backup_manager joined", tag="signal")
+
+    dump_DataStructure()
+    #queue_netflow.join()
+    debug("finish join", tag="signal")
+    return
+
+def initDataStructure(restore=False):
     # init Data Structure of Netflow result
     global DataStructure
     global network
     global NETMASK
 
+    if restore == True:
+        # restore data from dump
+        global dump_file
+        file = open(dump_file, 'rb')
+        DataStructure = pickle.load(file)
+        file.close()
+        return
+    
     for (nw,subnet) in network:
         ip = 0x01 <<(32 - subnet)
         # init default slot (NUM_OF_TIMELINE_INDEX)
@@ -387,6 +423,14 @@ def initDataStructure():
         DataStructure[nw] = (slot,NETMASK[subnet])
         debug(socket.inet_ntoa(nw), "Add DataStructure")
 
+def dump_DataStructure():
+    # Dump DataStructure with pickle dump
+    global dump_file
+    file = open(dump_file, 'wb')
+    global DataStructure
+    pickle.dump(DataStructure, file)
+    file.close()
+    
 def getSlot(ip):
     # param ip: network order
     # return Slot from DataStructure
@@ -457,6 +501,8 @@ def init():
     parser.add_option("-p", "--port", dest="port", help="Netflow Collection UDP port", default="9996")
     parser.add_option("-n", "--network", dest="network", help="Monitoring Network range")
     parser.add_option("-v", "--verbose", dest="verbose", help="Debug options")
+    parser.add_option("-r", "--restore", action="store_true", dest="restore", help="Restore data")
+    
     (options, args) = parser.parse_args()
 
     global verbose
@@ -496,8 +542,8 @@ def init():
         debug(network, "Network Range")
 
     # Init DataStruct
-    initDataStructure()
-
+    initDataStructure(restore=options.restore)
+        
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, sigBreak)
     # Data Struct Initialize
