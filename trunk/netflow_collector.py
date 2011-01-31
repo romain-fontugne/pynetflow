@@ -23,7 +23,8 @@ from optparse import OptionParser
 port = 9996
 network = []          # [(nw1,subnet1), (nw2,subnet2) ...]
 verbose = False
-repos = "/tmp/pynetflow"
+verbose_tag = "None"
+repos = "/tmp"
 BACKUP_PERIOD = 3600  # BACKUP TIME after last backup (second)
 SAVE_PERIOD = 3600    # SAVE Data, during SAVE_PERIOD (second)
 SIZE_OF_HEADER = 24   # Netflow v5 header size
@@ -50,8 +51,10 @@ WORKING = True
 LOCK = threading.Lock()
 STOP = 0
 
-def debug(value, comment=''):
-    if verbose == True:
+def debug(value, comment='', tag="None"):
+    global verbose
+    global verbose_tag
+    if verbose == True and (verbose_tag == tag or verbose_tag == "all"):
         print "[DEBUG %s] %s" % (comment, value)
 
 class Signalled(Exception):
@@ -205,29 +208,41 @@ class Netflow_Analyzer(Thread):
 
 class Backup_Manager(Thread):
     def run(self):
-        debug("Start Netflow Backup Manager....")
+        debug("Start Netflow Backup Manager....",tag="backup")
         self.backup_timeline_index = 0
         while STOP == 0:
             # Loop until exit signal
-            debug(BACKUP_PERIOD, "Time to sleep : Backup Manager")
-            time.sleep(BACKUP_PERIOD)
+            debug(BACKUP_PERIOD, "Time to sleep : Backup Manager",tag="backup")
+
             # init value
             # TODO: check time.time() is localtime second or GMT (we needs it is based on localtime)
             current_timeline_index = (time.time() % ONEDAY_SECOND) / NUM_OF_TIMELINE_INDEX
-            debug(current_timeline_index, "Current timeline index")
+
             # after wake up, start backup
             for network in DataStructure.keys():
                 (slot,subnet) = DataStructure[network]
                 # check cti, bti
                 if current_timeline_index < self.backup_timeline_index:
+                    # this case is change of day
                     current_timeline_index = current_timeline_index + NUM_OF_TIMELINE_INDEX
+
                 # check time to backup
-                update_timeline_index = self.backup_timeline_index + (BACKUP_PERIOD / (5*60))
+                # update_timeline_index is timeline index  until this time 
+                update_timeline_index = self.backup_timeline_index + (BACKUP_PERIOD / (5*60)) 
+
+                debug(self.backup_timeline_index, "backup time index", tag="backup")
+                debug(update_timeline_index, "update time index", tag="backup")
+                debug(current_timeline_index, "current time index", tag="backup")
 
                 while update_timeline_index <= current_timeline_index - (SAVE_PERIOD / (5*60)):
+                #while update_timeline_index <= current_timeline_index - (SAVE_PERIOD / (5*60)):
                     # Backup data
+                    debug(self.backup_timeline_index, "backup time index", tag="backup")
+                    debug(update_timeline_index, "update time index", tag="backup")
+                    debug(current_timeline_index, "current time index", tag="backup")
+
                     filename = "%s/%s_%s" % (repos, self.get_time(self.backup_timeline_index), socket.inet_ntoa(network))
-                    debug(filename, "Open file to backup")
+                    debug(filename, "Open file to backup", tag="backup")
                     fp = open(filename,'w')
                     for timeline in slot:
                         # backup for each timeline
@@ -235,11 +250,15 @@ class Backup_Manager(Thread):
                     # close file for network
                     fp.close()
                     # update backup_timeline_index
-                    self.backup_timeline_index = update_timeline_index
+                    self.backup_timeline_index = (update_timeline_index % NUM_OF_TIMELINE_INDEX)
                     update_timeline_index = self.backup_timeline_index + (BACKUP_PERIOD / (5*60))
 
+            time.sleep(BACKUP_PERIOD)
+            
     def backup(self, timeline, bti, fp, delta=12):
         # backup data in timeline (up, down link)
+        # delta is number of timeline index for backup
+        # ,since timeline index consists of 5 minute interval (1 hour = 12)
         for index in range(delta):
             (uplink, downlink) = timeline[(bti+index)%NUM_OF_TIMELINE_INDEX]
             r_uplink = self.get_flow_t(uplink, UPLINK)
@@ -247,8 +266,8 @@ class Backup_Manager(Thread):
             fp.write(r_uplink)
             fp.write(r_downlink)
             # free link
-            timeline[bti+index] = ([],[])
-            debug(bti+index, "Free  timeline")
+            timeline[(bti+index)%NUM_OF_TIMELINE_INDEX] = ([],[])
+            debug((bti+index)%NUM_OF_TIMELINE_INDEX, "Free  timeline",tag="backup")
 
     def get_flow_t(self, list, dir):
         # dir is direction (0: uplink, 1:downlink)
@@ -259,7 +278,7 @@ class Backup_Manager(Thread):
             daddr = socket.inet_ntoa(flow_t[1])
             result= result + "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n" % \
             (dir, saddr, daddr, flow_t[2], flow_t[3], flow_t[4], flow_t[5], flow_t[6], flow_t[7], flow_t[8])
-        debug(result,"flow_t")
+        debug(result,"flow_t","backup")
         return result
 
     def get_time(self, timeline_index):
@@ -437,15 +456,18 @@ def init():
     parser.add_option("-c", "--config", dest="config", help="Load Configure file") 
     parser.add_option("-p", "--port", dest="port", help="Netflow Collection UDP port", default="9996")
     parser.add_option("-n", "--network", dest="network", help="Monitoring Network range")
-    parser.add_option("-v", "--verbose", action="store_true", dest="verbose", help="Debug options")
+    parser.add_option("-v", "--verbose", dest="verbose", help="Debug options")
     (options, args) = parser.parse_args()
 
     global verbose
+    global verbose_tag
     global port
     global network
-
+    global repos
+    
     if options.verbose:
         verbose = True
+        verbose_tag = options.verbose
     if options.config:
         config = parse_config(options.config)
         if config.has_key('port'):
