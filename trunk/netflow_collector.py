@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/python2.6
 
 # Python NetFlow Collector
 #
@@ -20,6 +20,8 @@ import pickle                  # for dump & load (recovery process)
 from threading import Thread
 from optparse import OptionParser
 
+from proto import *
+
 # Global variable
 port = 9996
 network = []          # [(nw1,subnet1), (nw2,subnet2) ...]
@@ -35,6 +37,8 @@ NUM_OF_TIMELINE_INDEX = 288     # 5 minute slot (86400 / 60*5)
 UPLINK = 0            # UPLINK of timeline 
 DOWNLINK = 1          # DOWNLINK of timeline
 dump_file = "/tmp/pynetflow.pkl"
+console = 9000
+options = None
 
 NETMASK = {0: socket.inet_aton("255.255.255.255"),
            8: socket.inet_aton("0.255.255.255"),
@@ -42,6 +46,10 @@ NETMASK = {0: socket.inet_aton("255.255.255.255"),
            24: socket.inet_aton("0.0.0.255"),
 }
 
+
+API_ERROR = {"IP": "IP address is not correct format",
+             "no data": "No data"
+             }
 # Data Structure of Final Result
 DataStructure = {}
 
@@ -300,6 +308,109 @@ class Backup_Manager(Thread):
         file_time = "%s%s" % (date, hour)
         return file_time
 
+class ThreadedConsoleAPIHandler(SocketServer.BaseRequestHandler):
+    def handle(self):
+        data = self.request.recv(1024)
+        cur_thread = threading.currentThread()
+
+        # Parse Command
+        (tf, response) = self.parseAPI(data)
+        if tf == False:
+            self.request.send(response)
+            return
+        if tf == True and response == "exit":
+            self.request.send(response)
+            return
+        # General command API
+        if tf == True:
+            self.request.send(response)
+            
+    def parseAPI(self, data):
+        global API_ERROR
+        temp = data.split("\n")       # delete enter
+        token = temp[0].split(" ")       # parse cmd
+
+        debug(token, tag="api")
+        if token[0] == "exit" or token[0] == "quit":
+            # exit signal
+            return (True, "exit")
+
+        # show <IP> <Timestamp> <link> <limit>
+        if token[0] == "show":
+            nip = None
+            timestamp = None
+            link = -1
+            limit = 100000   # MAX result row
+            try:
+                nip = socket.inet_aton(token[1])
+                timestamp = long(token[2])
+                link = int(token[3])
+                limit = int(token[4])
+                if limit == 0:
+                    limit = 100000
+            except:
+                return (False, API_ERROR['IP'])
+
+            # get timeline Data
+            timeline = getTimeline(nip)
+
+            if timeline == False:
+                return (False, API_ERROR['no data'])
+            
+            # make result
+            r_index = (int(token[2]) % ONEDAY_SECOND) / NUM_OF_TIMELINE_INDEX   #requested index
+            c_index = (int(time.time()) % ONEDAY_SECOND) / NUM_OF_TIMELINE_INDEX      #current index
+            print r_index, c_index
+            # check next day
+            if c_index < r_index:
+                c_index = c_index + NUM_OF_TIMELINE_INDEX
+
+
+            result = []    
+            for index in range(c_index - r_index + 1):
+                fetch_index = (r_index + index) % NUM_OF_TIMELINE_INDEX
+                debug(fetch_index, tag="api")
+                (u_link, d_link) = timeline[ fetch_index ]
+
+                if link == 0 or link == -1:
+                    self.getIPbyTimestamp(u_link, timestamp, result)
+                if link == 1 or link == -1:
+                    self.getIPbyTimestamp(d_link, timestamp, result)
+                    
+            result.sort()
+            output = self.toString(result, limit)
+            debug(output, tag="api")
+        return (True, output)
+
+    def getIPbyTimestamp(self, link, timestamp, result):
+        for flow_t in link:
+            # output format [timestamp, saddr, sport, proto, daddr, dport, bcount, pcount]
+            if timestamp < flow_t[4]:
+                result.append([flow_t[4], flow_t[0], flow_t[6], flow_t[8], flow_t[1], flow_t[7], flow_t[3], flow_t[2]])
+
+    def toString(self, result, limit):
+        output = ""
+        global PROTO_DIC
+        count = len(result)
+        if len(result) > limit:
+            count = limit
+            
+        for index_t in range(count):
+            index = result[index_t]
+            # format: timestamp srcIP(srcPort)-(PROTO)->dstIP(dstPort) nBytes nPacket
+            print "index", index, len(index)
+            output = output + "%s %s(%s)-%s->%s(%s) %s %s\n" % \
+                     (index[0],socket.inet_ntoa(index[1]), index[2], PROTO_DIC[index[3]], \
+                      socket.inet_ntoa(index[4]), index[5], index[6], index[7])
+        print output    
+        return output     
+                                                               
+                                                               
+                                                               
+                    
+class ThreadedConsleAPI(SocketServer.ThreadingMixIn, SocketServer.TCPServer):
+    pass
+        
 class Console_Manager(Thread):
     def run(self):
         debug("Start Console Manager....")
@@ -347,7 +458,14 @@ def startAnalyzer():
     thr_netflow_analyzer = Netflow_Analyzer()
     thr_backup_manager = Backup_Manager()
     thr_console_manager = Console_Manager()
-
+    # Console API
+    global console
+    HOST, PORT = "localhost", console
+    consoleAPI = ThreadedConsleAPI( (HOST,PORT), ThreadedConsoleAPIHandler)
+    consoleAPIthread = threading.Thread(target=consoleAPI.serve_forever)
+    consoleAPIthread.setDaemon(True)
+    consoleAPIthread.start()
+    
 
     # start Thread first
     thr_netflow_analyzer.start()
@@ -371,21 +489,29 @@ def startAnalyzer():
         # send Null data to Queue for last computation of queue_netflow
         queue_netflow.put(False)
         debug("except signall 3", "end of queue", tag="signal")
-        
+
+        # shutdown consoleAPI server
+        #consoleAPIthread.shutdown()        
+
     # join
+
     debug("wait Before Join", tag="signal")
     thr_netflow_analyzer.join()
     debug("thr_netflow_analyzer joined", tag="signal")
 
 
-    thr_console_manager.join(timeout=10)
+    thr_console_manager.join()
     debug("thr_console_manager joined", tag="signal")
 
     thr_backup_manager.join(timeout=10)    
     debug("thr_backup_manager joined", tag="signal")
 
+
+    consoleAPIthread.join(timeout=10)
+    debug("consoleAPIthread joined", tag="signal")
+    
     dump_DataStructure()
-    #queue_netflow.join()
+    queue_netflow.join()
     debug("finish join", tag="signal")
     return
 
@@ -394,7 +520,7 @@ def initDataStructure(restore=False):
     global DataStructure
     global network
     global NETMASK
-
+    
     if restore == True:
         # restore data from dump
         global dump_file
@@ -440,7 +566,7 @@ def getSlot(ip):
         if bitwiseAND(ip, nw) == nw:
             return DataStructure[nw]
     debug(socket.inet_ntoa(ip), "Cannot find Slot")
-    return (False, "Cannot find slot of %s" % socket_inet_ntoa(ip))
+    return (False, "Cannot find slot of %s" % socket.inet_ntoa(ip))
 
 def getTimeline(ip):
     # return timeline of ip
@@ -487,10 +613,7 @@ def parse_config(fname):
             continue
         line = index.split("\n")
         content = line[0].split(" ")
-        if len(content) > 2:
-            config[content[0]] = content[1:]
-        else:
-            config[content[0]] = content[1]
+        config[content[0]] = content[1:]
     print config
     return config
 
@@ -502,7 +625,8 @@ def init():
     parser.add_option("-n", "--network", dest="network", help="Monitoring Network range")
     parser.add_option("-v", "--verbose", dest="verbose", help="Debug options")
     parser.add_option("-r", "--restore", action="store_true", dest="restore", help="Restore data")
-    
+
+    global options
     (options, args) = parser.parse_args()
 
     global verbose
@@ -510,6 +634,7 @@ def init():
     global port
     global network
     global repos
+    global console
     
     if options.verbose:
         verbose = True
@@ -518,7 +643,7 @@ def init():
         config = parse_config(options.config)
         if config.has_key('port'):
             # Port Number
-            port = int(config['port'])
+            port = int(config['port'][0])
         if config.has_key('network'):
             # Network
             networks = config['network']
@@ -526,11 +651,14 @@ def init():
                 network.append( add_network(nw) )
         if config.has_key('repos'):
             # Repository
-            repos = config['repos']
+            repos = config['repos'][0]
         if config.has_key('backup_time'):
             # Data backup period
-            BACKUP_PERIOD = int(config['backup_period'])
-
+            BACKUP_PERIOD = int(config['backup_period'][0])
+        if config.has_key('console'):
+            # Console API port
+            console = int(config['console'][0])
+            
     # Netflow collector UDP Port
     if options.port:
         port = int(options.port)
