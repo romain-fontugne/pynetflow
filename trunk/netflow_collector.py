@@ -236,41 +236,58 @@ class Backup_Manager(Thread):
 
             # init value
             # TODO: check time.time() is localtime second or GMT (we needs it is based on localtime)
-            current_timeline_index = (time.time() % ONEDAY_SECOND) / NUM_OF_TIMELINE_INDEX
+            current_timeline_index = (time.time() % ONEDAY_SECOND) / 300
 
+            debug(current_timeline_index, "current_timeline_index 1", tag="backup")
+            
+            new_backup = 0
             # after wake up, start backup
             for network in DataStructure.keys():
                 (slot,subnet) = DataStructure[network]
                 # check cti, bti
-                if current_timeline_index < self.backup_timeline_index:
+
+                local_backup_timeline_index = self.backup_timeline_index
+                #if current_timeline_index < self.backup_timeline_index:
+                if current_timeline_index < local_backup_timeline_index:
                     # this case is change of day
                     current_timeline_index = current_timeline_index + NUM_OF_TIMELINE_INDEX
 
+                debug(current_timeline_index, "modified current_timeline_index 2", tag="backup")
                 # check time to backup
                 # update_timeline_index is timeline index  until this time 
-                update_timeline_index = self.backup_timeline_index + (BACKUP_PERIOD / (5*60)) 
+                update_timeline_index = local_backup_timeline_index + (BACKUP_PERIOD / (5*60)) 
 
 
-
+                debug("From %s to %s in %s(outer)" % (local_backup_timeline_index, update_timeline_index, current_timeline_index), "backup time index", tag="backup")
                 while update_timeline_index <= current_timeline_index - (SAVE_PERIOD / (5*60)):
                 #while update_timeline_index <= current_timeline_index - (SAVE_PERIOD / (5*60)):
                 # Backup data
-                    debug("From %s to %s in %s" % (self.backup_timeline_index, update_timeline_index, current_timeline_index), "backup time index", tag="backup")
+                    debug("From %s to %s in %s(innet)" % (local_backup_timeline_index, update_timeline_index, current_timeline_index), "backup time index", tag="backup")
                     
-                    filename = "%s/%s_%s" % (repos, self.get_time(self.backup_timeline_index), socket.inet_ntoa(network))
+                    filename = "%s/%s_%s" % (repos, self.get_time(local_backup_timeline_index), socket.inet_ntoa(network))
                     debug(filename, "Open file to backup", tag="backup")
                     fp = open(filename,'w')
                     for timeline in slot:
                         # backup for each timeline
-                        self.backup(timeline, self.backup_timeline_index, fp)
+                        self.backup(timeline, local_backup_timeline_index, fp)
+                        new_backup = local_backup_timeline_index + 12
                     # close file for network
                     fp.close()
                     # update backup_timeline_index
-                    self.backup_timeline_index = update_timeline_index % NUM_OF_TIMELINE_INDEX
-                    update_timeline_index = self.backup_timeline_index + (BACKUP_PERIOD / (5*60))
-
+                    #self.backup_timeline_index = update_timeline_index % NUM_OF_TIMELINE_INDEX
+                    local_backup_timeline_index = update_timeline_index
                     
-            time.sleep(BACKUP_PERIOD)
+                    # Check next day
+                    if local_backup_timeline_index > NUM_OF_TIMELINE_INDEX:
+                        break # Finish loop
+
+                    update_timeline_index = local_backup_timeline_index + (BACKUP_PERIOD / (5*60))
+                    debug("From %s to %s in %s(inner2)" % (local_backup_timeline_index, update_timeline_index, current_timeline_index), "backup time index", tag="backup")
+
+            # End of each network backup
+            self.backup_timeline_index = new_backup % NUM_OF_TIMELINE_INDEX
+            #time.sleep(BACKUP_PERIOD)
+            time.sleep(60)
             debug(time.localtime(), "wakeup", tag="backup")
             
     def backup(self, timeline, bti, fp, delta=12):
@@ -285,7 +302,7 @@ class Backup_Manager(Thread):
             fp.write(r_downlink)
             # free link
             timeline[(bti+index)%NUM_OF_TIMELINE_INDEX] = ([],[])
-            debug((bti+index)%NUM_OF_TIMELINE_INDEX, "Free  timeline",tag="backup")
+            #debug((bti+index)%NUM_OF_TIMELINE_INDEX, "Free  timeline",tag="backup")
 
     def get_flow_t(self, list, dir):
         # dir is direction (0: uplink, 1:downlink)
@@ -296,7 +313,7 @@ class Backup_Manager(Thread):
             daddr = socket.inet_ntoa(flow_t[1])
             result= result + "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n" % \
             (dir, saddr, daddr, flow_t[2], flow_t[3], flow_t[4], flow_t[5], flow_t[6], flow_t[7], flow_t[8])
-        debug(result,"flow_t","backup")
+        #debug(result,"flow_t","backup")
         return result
 
     def get_time(self, timeline_index):
@@ -305,9 +322,14 @@ class Backup_Manager(Thread):
         #     return 201101180000
         # ex) if timeline_index : 1
         #     return 201101180005
-        date = time.strftime("%Y%m%d", time.gmtime())
+        if timeline_index >= 264: # in a next day, save previous day's data
+            date = time.strftime("%Y%m%d", time.gmtime(time.time() - 12000))
+        else:
+            date = time.strftime("%Y%m%d", time.gmtime())
+
         hour = time.strftime("%H%M", time.gmtime(timeline_index * 60 * 5))
         file_time = "%s%s" % (date, hour)
+        debug("%s %s" % (timeline_index, file_time), "filename", tag="backup")
         return file_time
 
 class ThreadedConsoleAPIHandler(SocketServer.BaseRequestHandler):
@@ -616,7 +638,6 @@ def parse_config(fname):
         line = index.split("\n")
         content = line[0].split(" ")
         config[content[0]] = content[1:]
-    print config
     return config
 
 
