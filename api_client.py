@@ -4,7 +4,7 @@ import time
 
 HOST, PORT = "localhost", 9000
 
-data = "show %s %s -1 1000" % (sys.argv[1], (long(time.time()) - 300) )
+data = "show %s %s -1 1000" % (sys.argv[1], (long(time.time()) - 3600) )
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
