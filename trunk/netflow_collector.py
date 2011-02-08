@@ -143,20 +143,22 @@ class Netflow_Analyzer(Thread):
                 else:
                     index = self.toInt(self.bitwiseAND(flow['daddr'], netmask))
                     debug(index, "DOWNLINK")
-                debug(index, "Slot index")
+                debug(index, "Slot index",tag="backup")
                 timeline = slot[index]
 
                 # Find timeline
                 (timeline_index, stime) = self.getTimeline(flow['stime'], header['SysUpTime'], header['EpochSeconds'])
 
+                debug(timeline_index, "Timeline_index", tag="backup")
+                
                 # TEST
                 if timeline_index > NUM_OF_TIMELINE_INDEX:
-                    debug(timeline_index, "Timeline Index Overflow")
+                    debug(timeline_index, "Timeline Index Overflow", tag="backup")
 
                 # Find link
                 links = timeline[timeline_index]
-                debug(timeline_index, "Timeline index")
-                link = links[direction]
+                debug(timeline_index, "Timeline index", tag="backup")
+                link = links[direction]   # 0:uplink, 1:downlink
                 flow_t = [flow['saddr'], flow['daddr'], flow['pcount'], flow['bcount'], \
                               stime, flow['etime']-flow['stime'], flow['sport'], flow['dport'], flow['protocol']]
                 # Append Data
@@ -204,6 +206,7 @@ class Netflow_Analyzer(Thread):
 
     def getTimeline(self, stime, SysUpTime, EpochSeconds):
         # return (timeline_index, second.milisecond)
+        # timeline_index is where to save flow_t
         milisecond = stime - SysUpTime
         elapse_second = milisecond / 1000
         (time_s, time_m) = (EpochSeconds + elapse_second, milisecond % 1000)
@@ -223,7 +226,10 @@ class Netflow_Analyzer(Thread):
 class Backup_Manager(Thread):
     def run(self):
         debug("Start Netflow Backup Manager....",tag="backup")
+
         self.backup_timeline_index = 0
+        # data is backup from backup_timeline_index to current_timeline_index
+        #
         while STOP == 0:
             # Loop until exit signal
             debug(BACKUP_PERIOD, "Time to sleep : Backup Manager",tag="backup")
@@ -244,17 +250,13 @@ class Backup_Manager(Thread):
                 # update_timeline_index is timeline index  until this time 
                 update_timeline_index = self.backup_timeline_index + (BACKUP_PERIOD / (5*60)) 
 
-                debug(self.backup_timeline_index, "backup time index", tag="backup")
-                debug(update_timeline_index, "update time index", tag="backup")
-                debug(current_timeline_index, "current time index", tag="backup")
+
 
                 while update_timeline_index <= current_timeline_index - (SAVE_PERIOD / (5*60)):
                 #while update_timeline_index <= current_timeline_index - (SAVE_PERIOD / (5*60)):
-                    # Backup data
-                    debug(self.backup_timeline_index, "backup time index", tag="backup")
-                    debug(update_timeline_index, "update time index", tag="backup")
-                    debug(current_timeline_index, "current time index", tag="backup")
-
+                # Backup data
+                    debug("From %s to %s in %s" % (self.backup_timeline_index, update_timeline_index, current_timeline_index), "backup time index", tag="backup")
+                    
                     filename = "%s/%s_%s" % (repos, self.get_time(self.backup_timeline_index), socket.inet_ntoa(network))
                     debug(filename, "Open file to backup", tag="backup")
                     fp = open(filename,'w')
@@ -264,12 +266,12 @@ class Backup_Manager(Thread):
                     # close file for network
                     fp.close()
                     # update backup_timeline_index
-                    self.backup_timeline_index = (update_timeline_index % NUM_OF_TIMELINE_INDEX)
+                    self.backup_timeline_index = update_timeline_index % NUM_OF_TIMELINE_INDEX
                     update_timeline_index = self.backup_timeline_index + (BACKUP_PERIOD / (5*60))
 
-            debug("Before Sleep", tag="signal")
+                    
             time.sleep(BACKUP_PERIOD)
-            debug("After Sleep", tag="signal")
+            debug(time.localtime(), "wakeup", tag="backup")
             
     def backup(self, timeline, bti, fp, delta=12):
         # backup data in timeline (up, down link)
