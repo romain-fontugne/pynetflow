@@ -71,7 +71,7 @@ def sigBreak(signum, f):
     raise Signalled
 
 class Netflow_Generator(Thread):
-    def __init__(self, nw, delta=1, interval=1, host='127.0.0.1', port=9996):
+    def __init__(self, nw, delta=1, interval=1, host='127.0.0.1', port=9997):
         # delta => subnet (1=/24, 2=/16, 3=/8)
         # interval : sleeping time
         threading.Thread.__init__(self)
