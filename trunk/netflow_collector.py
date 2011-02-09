@@ -33,6 +33,7 @@ SAVE_PERIOD = 3600    # SAVE Data, during SAVE_PERIOD (second)
 SIZE_OF_HEADER = 24   # Netflow v5 header size
 SIZE_OF_RECORD = 48   # Netflow v5 record size
 ONEDAY_SECOND = 86400 # 60 second * 60 minute * 24 hours
+TIMELINE_PERIOD = 300 # 60 second * 5 minute
 NUM_OF_TIMELINE_INDEX = 288     # 5 minute slot (86400 / 60*5)
 UPLINK = 0            # UPLINK of timeline 
 DOWNLINK = 1          # DOWNLINK of timeline
@@ -149,15 +150,14 @@ class Netflow_Analyzer(Thread):
                 # Find timeline
                 (timeline_index, stime) = self.getTimeline(flow['stime'], header['SysUpTime'], header['EpochSeconds'])
 
-                debug(timeline_index, "Timeline_index", tag="backup")
+                debug(timeline_index, "Timeline_index", tag="parse")
                 
                 # TEST
                 if timeline_index > NUM_OF_TIMELINE_INDEX:
-                    debug(timeline_index, "Timeline Index Overflow", tag="backup")
+                    debug(timeline_index, "Timeline Index Overflow", tag="parse")
 
                 # Find link
                 links = timeline[timeline_index]
-                debug(timeline_index, "Timeline index", tag="backup")
                 link = links[direction]   # 0:uplink, 1:downlink
                 flow_t = [flow['saddr'], flow['daddr'], flow['pcount'], flow['bcount'], \
                               stime, flow['etime']-flow['stime'], flow['sport'], flow['dport'], flow['protocol']]
@@ -210,7 +210,7 @@ class Netflow_Analyzer(Thread):
         milisecond = stime - SysUpTime
         elapse_second = milisecond / 1000
         (time_s, time_m) = (EpochSeconds + elapse_second, milisecond % 1000)
-        timeline = (time_s % ONEDAY_SECOND) / NUM_OF_TIMELINE_INDEX
+        timeline = (time_s % ONEDAY_SECOND) / TIMELINE_PERIOD
         return (timeline, "%s.%s" % (time_s, time_m) )
 
     def bitwiseAND(self, a, b):
@@ -234,7 +234,7 @@ class Backup_Manager(Thread):
             # Loop until exit signal
             # init value
             # TODO: check time.time() is localtime second or GMT (we needs it is based on localtime)
-            current_timeline_index = (time.time() % ONEDAY_SECOND) / 300
+            current_timeline_index = (time.time() % ONEDAY_SECOND) / TIMELINE_PERIOD
 
             new_backup = 0
             # after wake up, start backup
@@ -379,8 +379,8 @@ class ThreadedConsoleAPIHandler(SocketServer.BaseRequestHandler):
                 return (False, API_ERROR['no data'])
             
             # make result
-            r_index = (int(token[2]) % ONEDAY_SECOND) / NUM_OF_TIMELINE_INDEX   #requested index
-            c_index = (int(time.time()) % ONEDAY_SECOND) / NUM_OF_TIMELINE_INDEX      #current index
+            r_index = (int(token[2]) % ONEDAY_SECOND) / TIMELINE_PERIOD         #requested index
+            c_index = (int(time.time()) % ONEDAY_SECOND) / TIMELINE_PERIOD      #current index
             print r_index, c_index
             # check next day
             if c_index < r_index:
@@ -445,6 +445,9 @@ class Console_Manager(Thread):
             # ex) plot 10.1.1.2
             self.plot(token[1])
 
+        elif token[0] == "stat":
+            self.stat()
+            
     def plot(self, ip):
         # plot graph of ip
 
@@ -468,8 +471,12 @@ class Console_Manager(Thread):
         except:
             print "Uplink", d_uplink
             print "Downlink", d_downlink
-
-
+            
+    def stat(self):
+        global DataStructure
+        for slot in DataStructure.keys():
+            print slot
+             
 def startAnalyzer():
     # start threads
     global port
