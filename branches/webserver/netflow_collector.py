@@ -16,11 +16,14 @@ import signal
 import struct
 import SocketServer
 import pickle                  # for dump & load (recovery process)
+from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
+
 
 from threading import Thread
 from optparse import OptionParser
 
 from proto import *
+from DataStructure import *
 
 # Global variable
 port = 9996
@@ -32,8 +35,6 @@ BACKUP_PERIOD = 3600  # BACKUP TIME after last backup (second)
 SAVE_PERIOD = 3600    # SAVE Data, during SAVE_PERIOD (second)
 SIZE_OF_HEADER = 24   # Netflow v5 header size
 SIZE_OF_RECORD = 48   # Netflow v5 record size
-ONEDAY_SECOND = 86400 # 60 second * 60 minute * 24 hours
-TIMELINE_PERIOD = 300 # 60 second * 5 minute
 NUM_OF_TIMELINE_INDEX = 288     # 5 minute slot (86400 / 60*5)
 UPLINK = 0            # UPLINK of timeline 
 DOWNLINK = 1          # DOWNLINK of timeline
@@ -52,7 +53,7 @@ API_ERROR = {"IP": "IP address is not correct format",
              "no data": "No data"
              }
 # Data Structure of Final Result
-DataStructure = {}
+#DataStructure = {}
 
 # Queue
 queue_netflow = Queue.Queue()
@@ -138,11 +139,11 @@ class Netflow_Analyzer(Thread):
                 # Find slot index
                 index = 0
                 if direction == UPLINK:
-                    index = self.toInt(self.bitwiseAND(flow['saddr'], netmask))
+                    index = toInt(bitwiseAND(flow['saddr'], netmask))
                     
                     debug(index, "UPLINK")
                 else:
-                    index = self.toInt(self.bitwiseAND(flow['daddr'], netmask))
+                    index = toInt(bitwiseAND(flow['daddr'], netmask))
                     debug(index, "DOWNLINK")
                 debug(index, "Slot index",tag="backup")
                 timeline = slot[index]
@@ -198,9 +199,9 @@ class Netflow_Analyzer(Thread):
         # return (Slot, direction) from DataStructure
         for nw in DataStructure.keys():
             # check DADDR
-            if self.bitwiseAND(daddr , nw) == nw:
+            if bitwiseAND(daddr , nw) == nw:
                 return (DataStructure[nw], DOWNLINK)
-            elif self.bitwiseAND(saddr , nw) == nw:
+            elif bitwiseAND(saddr , nw) == nw:
                 return (DataStructure[nw], UPLINK)
         return ( (False,False), "Cannot Find Slot")
 
@@ -213,15 +214,6 @@ class Netflow_Analyzer(Thread):
         timeline = (time_s % ONEDAY_SECOND) / TIMELINE_PERIOD
         return (timeline, "%s.%s" % (time_s, time_m) )
 
-    def bitwiseAND(self, a, b):
-        # bitwise 4 bytes string a,b
-        return "%s%s%s%s" % (chr( ord(a[0]) & ord(b[0]) ), chr( ord(a[1]) & ord(b[1]) ), \
-                                 chr( ord(a[2]) & ord(b[2]) ), chr( ord(a[3]) & ord(b[3]) ) )
-    def toInt(self, bytes):
-        # convert 4 bytes string to integer
-        debug(socket.inet_ntoa(bytes),"slot index")
-
-        return (ord(bytes[0]) << 24) + (ord(bytes[1]) << 16) + (ord(bytes[2]) < 8) + (ord(bytes[3]))
 
 class Backup_Manager(Thread):
     def run(self):
@@ -460,23 +452,73 @@ class Console_Manager(Thread):
         d_uplink = []
         d_downlink = []
         for (uplink, downlink) in timeline:
-            d_uplink.append(getBytesFromLink(uplink)/1000)
-            d_downlink.append(0 - getBytesFromLink(downlink)/1000)
-        try:
-            import matplotlib.pyplot as plt
-            plt.plot(d_uplink)
-            plt.plot(d_downlink)
-            plt.ylabel('UPLINK')
-            plt.show()
-        except:
-            print "Uplink", d_uplink
-            print "Downlink", d_downlink
+            d_uplink.append(getBytesFromLink(uplink))
+            d_downlink.append(0 - getBytesFromLink(downlink))
+        print "Uplink", d_uplink
+        print "Downlink", d_downlink
             
     def stat(self):
         global DataStructure
         for slot in DataStructure.keys():
             print slot
              
+# Web Server for graphics
+class Web_Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        try:
+            (rvalue, content) = self.parseURL(self.path) 
+
+            if rvalue == 404:
+                # wrong request
+                self.send_error(404, content)
+                return
+
+            cht = content['cht']    
+            if cht == "bcount": 
+                imgdata = cht_timeline(cht, content['ip'])
+
+                self.send_response(200)
+                self.send_header('Content-Type','image/png')
+                self.end_headers()
+                print imgdata
+                self.wfile.write(imgdata.getvalue())
+                imgdata.close()
+                return
+
+            elif cht == "log":
+                result_str = cht_log(content)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(result_str)
+                return
+
+                
+        except IOError:
+            self.send_error(404,"File Not Found: %s" % self.path)
+
+    def parseURL(self, str):
+        # format: /chart?cht=bcount&ip=123.123.123.1&key=abcdeff...
+        # cht=bcount,pcount
+        # ip=123.123.123.1
+        # key=<user allocated key>
+        index = str.split("?")
+        if index[0] != "/chart":
+            return (404,"Bad request")
+        param = index[1].split("&")
+        req_dic = {}
+        for req in param:
+            item = req.split("=")
+            req_dic[item[0]] = item[1]
+
+        if req_dic.has_key('cht') == False:
+            return (404, "Bad request: no cht")
+
+        return (200, req_dic)    
+
+        
+class ThreadedHTTPServer(SocketServer.ThreadingMixIn, HTTPServer):
+    pass
+
 def startAnalyzer():
     # start threads
     global port
@@ -486,14 +528,20 @@ def startAnalyzer():
     thr_netflow_analyzer = Netflow_Analyzer()
     thr_backup_manager = Backup_Manager()
     thr_console_manager = Console_Manager()
+
     # Console API
     global console
-    HOST, PORT = "localhost", console
+    HOST, PORT = "59.27.92.27", console
     consoleAPI = ThreadedConsleAPI( (HOST,PORT), ThreadedConsoleAPIHandler)
     consoleAPIthread = threading.Thread(target=consoleAPI.serve_forever)
     consoleAPIthread.setDaemon(True)
     consoleAPIthread.start()
-    
+
+    # Web Server
+    webAPI = ThreadedHTTPServer( (HOST, 8081), Web_Handler)
+    webAPIThread = threading.Thread(target=webAPI.serve_forever)
+    webAPIThread.setDaemon(True)
+    webAPIThread.start()
 
     # start Thread first
     thr_netflow_analyzer.start()
@@ -584,46 +632,7 @@ def dump_DataStructure():
     global DataStructure
     pickle.dump(DataStructure, file)
     file.close()
-    
-def getSlot(ip):
-    # param ip: network order
-    # return Slot from DataStructure
-    # which has ip
-    for nw in DataStructure.keys():
-        # check bitwiseAND
-        if bitwiseAND(ip, nw) == nw:
-            return DataStructure[nw]
-    debug(socket.inet_ntoa(ip), "Cannot find Slot")
-    return (False, "Cannot find slot of %s" % socket.inet_ntoa(ip))
 
-def getTimeline(ip):
-    # return timeline of ip
-    # find Slot
-    (slot, subnet) = getSlot(ip)
-    if slot == False:
-        return False
-
-    nw_index = bitwiseAND(ip, subnet)
-    return slot[toInt(nw_index)]
-
-def getBytesFromLink(link):
-    # retrieve data from link
-    result = 0
-    for index in link:
-        bcount = index[3]
-        result = result + bcount
-    return result
-
-        
-def bitwiseAND(a,b):
-    # bitwise a and b
-    # bitwise 4 bytes string a,b
-    return "%s%s%s%s" % (chr( ord(a[0]) & ord(b[0]) ), chr( ord(a[1]) & ord(b[1]) ), \
-                             chr( ord(a[2]) & ord(b[2]) ), chr( ord(a[3]) & ord(b[3]) ) )
-
-def toInt(bytes):
-    # convert 4 bytes string to integer
-    return (ord(bytes[0]) << 24) + (ord(bytes[1]) << 16) + (ord(bytes[2]) < 8) + (ord(bytes[3]))
 
 def add_network(nw):
     #config setting of monitoring network
