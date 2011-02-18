@@ -120,10 +120,10 @@ def cht_timeline(type, ip):
         d_downlink = []
         ctil = cur_TIL()
         x = [] # xtick
-        for (uplink, downlink) in timeline[ctil - 30:ctil]:
-        #for (uplink, downlink) in timeline:
-            d_uplink.append(getBytesFromLink(uplink) / 300)
-            d_downlink.append(getBytesFromLink(downlink) / 300)
+        #for (uplink, downlink) in timeline[ctil - 60:ctil]:
+        for (uplink, downlink) in timeline:
+            d_uplink.append( (getBytesFromLink(uplink) / 300) / 1000 )   # 300 second, kBps
+            d_downlink.append( -(getBytesFromLink(downlink) / 300) / 1000 )
 
         fig = plt.figure()
 
@@ -141,7 +141,7 @@ def cht_timeline(type, ip):
         ax.grid(True)
         #X,Y Label
         ax.set_xlabel("Time")
-        ax.set_ylabel("Bps")
+        ax.set_ylabel("KBps")
         import StringIO, Image
         imgdata = StringIO.StringIO()
         fig.savefig(imgdata, format="png")

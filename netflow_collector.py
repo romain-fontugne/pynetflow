@@ -530,15 +530,16 @@ def startAnalyzer():
     thr_console_manager = Console_Manager()
 
     # Console API
-    global console
-    HOST, PORT = "59.27.92.27", console
-    consoleAPI = ThreadedConsleAPI( (HOST,PORT), ThreadedConsoleAPIHandler)
+    global console_port
+    HOST, PORT = "", console
+    consoleAPI = ThreadedConsleAPI( (HOST,console_port), ThreadedConsoleAPIHandler)
     consoleAPIthread = threading.Thread(target=consoleAPI.serve_forever)
     consoleAPIthread.setDaemon(True)
     consoleAPIthread.start()
 
     # Web Server
-    webAPI = ThreadedHTTPServer( (HOST, 8081), Web_Handler)
+    global api_port
+    webAPI = ThreadedHTTPServer( (HOST, api_port), Web_Handler)
     webAPIThread = threading.Thread(target=webAPI.serve_forever)
     webAPIThread.setDaemon(True)
     webAPIThread.start()
@@ -670,7 +671,8 @@ def init():
     global port
     global network
     global repos
-    global console
+    global console_port
+    global api_port
     
     if options.verbose:
         verbose = True
@@ -691,9 +693,9 @@ def init():
         if config.has_key('backup_time'):
             # Data backup period
             BACKUP_PERIOD = int(config['backup_period'][0])
-        if config.has_key('console'):
+        if config.has_key('console_port'):
             # Console API port
-            console = int(config['console'][0])
+            console = int(config['console_port'][0])
             
     # Netflow collector UDP Port
     if options.port:
