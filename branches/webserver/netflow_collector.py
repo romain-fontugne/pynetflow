@@ -8,6 +8,7 @@
 # For license information, see LICENSE.TXT
 #
 
+import logging
 import time
 import socket
 import Queue
@@ -26,7 +27,11 @@ from proto import *
 from DataStructure import *
 
 # Global variable
-port = 9996
+params = {'netflow_port':9996, \
+              'console_port':9000, \
+              'api_port':9001, \
+              'log':'warning'}
+
 network = []          # [(nw1,subnet1), (nw2,subnet2) ...]
 verbose = False
 verbose_tag = "None"
@@ -39,8 +44,7 @@ NUM_OF_TIMELINE_INDEX = 288     # 5 minute slot (86400 / 60*5)
 UPLINK = 0            # UPLINK of timeline 
 DOWNLINK = 1          # DOWNLINK of timeline
 dump_file = "/tmp/pynetflow.pkl"
-console = 9000
-options = None
+recvCount = 0           # recved netflow count from sensor
 
 NETMASK = {0: socket.inet_aton("255.255.255.255"),
            8: socket.inet_aton("0.255.255.255"),
@@ -62,6 +66,22 @@ queue_netflow = Queue.Queue()
 WORKING = True
 LOCK = threading.Lock()
 STOP = 0
+
+#
+# Logging
+#
+LOG_FILENAME = "netflow_collector.out"
+LOG_LEVELS = {'debug'       :logging.DEBUG,\
+                  'info'    :logging.INFO, \
+                  'warning' : logging.WARNING, \
+                  'error'   : logging.ERROR, \
+                  'critical': logging.CRITICAL }
+
+              
+logger = logging.getLogger('NCLogger')
+logger.setLevel(LOG_LEVELS[params['log']])
+log_handler = logging.handlers.RotatingFileHandler(LOG_FILENAME, maxBytes=100, backupCount=5)
+logger.addHandler(log_handler)
 
 def debug(value, comment='', tag="None"):
     global verbose
@@ -89,19 +109,22 @@ class Netflow_Parser(SocketServer.BaseRequestHandler):
     2) Push to Queue, if it is netflow 5
     """
     def handle(self):
-        debug("called handler")
         data = self.request[0].strip()
         socket = self.request[1]
-        debug("%s len(%s)" % (self.client_address[0],len(data)) , "client IP")
+
         # Check Packet is netflow v5
         (TF, version) = self.checkNetflowPacket(data)
         global queue_netflow
+        global recvCount
+
         if TF == True:
             queue_netflow.put(data)
-            debug(len(data), "Push to Queue")
+            recvCount = recvCount + 1
+
         else:
-            print "Wrong Netflow packet"
-            debug(data, "Wrong Netflow packet")
+            logger.error("Received Wrong Netflow Record from %s" % self.client_address[0])
+            logger.error("Data:\n%x" % data)
+
 
     def checkNetflowPacket(self, packet):
         # Check packet is Netflow v5
@@ -116,8 +139,9 @@ class Netflow_Parser(SocketServer.BaseRequestHandler):
 
 class Netflow_Analyzer(Thread):
     def run(self):
-        debug("Start Netflow Analyzer Thread....")
+        logger.info("Start Netflow Analyzer Thread....")
         global queue_netflow
+
         while STOP == 0:
             data = queue_netflow.get()
             # Check of signal
@@ -521,25 +545,25 @@ class ThreadedHTTPServer(SocketServer.ThreadingMixIn, HTTPServer):
 
 def startAnalyzer():
     # start threads
-    global port
-    netflow_parser = SocketServer.UDPServer(("",port), Netflow_Parser)
+    global params
 
-    # new
+
+    # Analyzer
     thr_netflow_analyzer = Netflow_Analyzer()
     thr_backup_manager = Backup_Manager()
     thr_console_manager = Console_Manager()
 
+    # Netflow receiver
+    netflow_parser = SocketServer.UDPServer( (params['HOST'],params['netflow_port'] ), Netflow_Parser)
+
     # Console API
-    global console_port
-    HOST, PORT = "", console
-    consoleAPI = ThreadedConsleAPI( (HOST,console_port), ThreadedConsoleAPIHandler)
+    consoleAPI = ThreadedConsleAPI( (params['HOST'],params['console_port']) , ThreadedConsoleAPIHandler)
     consoleAPIthread = threading.Thread(target=consoleAPI.serve_forever)
     consoleAPIthread.setDaemon(True)
     consoleAPIthread.start()
 
-    # Web Server
-    global api_port
-    webAPI = ThreadedHTTPServer( (HOST, api_port), Web_Handler)
+    # Chart API
+    webAPI = ThreadedHTTPServer( (params['HOST'], params['api_port']), Web_Handler)
     webAPIThread = threading.Thread(target=webAPI.serve_forever)
     webAPIThread.setDaemon(True)
     webAPIThread.start()
@@ -548,10 +572,6 @@ def startAnalyzer():
     thr_netflow_analyzer.start()
     thr_backup_manager.start()
     thr_console_manager.start()
-
-    # start Collect Server
-    debug(port, "Start UDP Server")
-
 
     # signal
     try:
@@ -571,7 +591,7 @@ def startAnalyzer():
         #consoleAPIthread.shutdown()        
 
     # join
-
+        
     debug("wait Before Join", tag="signal")
     thr_netflow_analyzer.join()
     debug("thr_netflow_analyzer joined", tag="signal")
@@ -597,7 +617,7 @@ def initDataStructure(restore=False):
     global DataStructure
     global network
     global NETMASK
-    
+
     if restore == True:
         # restore data from dump
         global dump_file
@@ -643,6 +663,8 @@ def add_network(nw):
 def parse_config(fname):
     # parse configure file
     # return cofig dictionary
+    global params
+
     fp = open(fname,'r')
     config = {}
     for index in fp:
@@ -651,62 +673,54 @@ def parse_config(fname):
             continue
         line = index.split("\n")
         content = line[0].split(" ")
-        config[content[0]] = content[1:]
-    return config
+        # content[0] is keyword
+        # content[1:] is param values
+        if len(content) == 2:
+            # keyword value
+            # value can be integer or string
+            try:
+                # integer value 
+                params[content[0]] = int(content[1])
+            except:
+                # string value
+                params[content[0]] = content[1]
+        elif len(content) > 2:
+            # one more values 
+            config[content[0]] = content[1:]
+
+        else:
+            # wrong configuration
+            print content
 
 
 def init():
     parser = OptionParser()
     parser.add_option("-c", "--config", dest="config", help="Load Configure file") 
-    parser.add_option("-p", "--port", dest="port", help="Netflow Collection UDP port", default="9996")
-    parser.add_option("-n", "--network", dest="network", help="Monitoring Network range")
     parser.add_option("-v", "--verbose", dest="verbose", help="Debug options")
-    parser.add_option("-r", "--restore", action="store_true", dest="restore", help="Restore data")
 
-    global options
+    global params
     (options, args) = parser.parse_args()
 
     global verbose
     global verbose_tag
-    global port
     global network
-    global repos
-    global console_port
-    global api_port
     
     if options.verbose:
         verbose = True
         verbose_tag = options.verbose
-    if options.config:
-        config = parse_config(options.config)
-        if config.has_key('port'):
-            # Port Number
-            port = int(config['port'][0])
-        if config.has_key('network'):
-            # Network
-            networks = config['network']
-            for nw in networks:
-                network.append( add_network(nw) )
-        if config.has_key('repos'):
-            # Repository
-            repos = config['repos'][0]
-        if config.has_key('backup_time'):
-            # Data backup period
-            BACKUP_PERIOD = int(config['backup_period'][0])
-        if config.has_key('console_port'):
-            # Console API port
-            console = int(config['console_port'][0])
-            
-    # Netflow collector UDP Port
-    if options.port:
-        port = int(options.port)
-        debug(port, "UDP port")
-    # Monitoring Network Range
-    if options.network:
-        nw = options.network
-        network.append( add_network(nw) )
-        debug(network, "Network Range")
 
+    if options.config:
+        parse_config(options.config)
+    else:
+        # wrong start
+        # print help
+        exit
+
+    # networks config
+    networks = params['network']
+    for nw in networks:
+        network.append( add_network(nw) )
+            
     # Init DataStruct
     initDataStructure(restore=options.restore)
         
