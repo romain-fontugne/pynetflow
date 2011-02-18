@@ -48,6 +48,13 @@ ONEDAY_SECOND = 86400 # 60 second * 60 minute * 24 hours
 TIMELINE_PERIOD = 300 # 60 second * 5 minute
 NUM_OF_TIMELINE_INDEX = 288
 
+def showDataStructure():
+    # display DataStructure
+    print "=" * 20 + " show DataStructure " + "="*20
+    print DataStructure
+    #for key in DataStructure.keys():
+    #    print socket.inet_ntoa(key)
+
 def getSlot(ip):
     # param ip: network order
     # return Slot from DataStructure

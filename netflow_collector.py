@@ -8,7 +8,9 @@
 # For license information, see LICENSE.TXT
 #
 
+import sys
 import logging
+import logging.handlers
 import time
 import socket
 import Queue
@@ -16,7 +18,7 @@ import threading
 import signal
 import struct
 import SocketServer
-import pickle                  # for dump & load (recovery process)
+import pickle, pprint                  # for dump & load (recovery process)
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 
 
@@ -27,10 +29,11 @@ from proto import *
 from DataStructure import *
 
 # Global variable
-params = {'netflow_port':9996, \
-              'console_port':9000, \
-              'api_port':9001, \
-              'log':'warning'}
+params = { 'HOST' : [''], \
+               'netflow_port':[10100], \
+               'console_port':[10200], \
+               'chart_port':[10300], \
+               'log':['debug']}
 
 network = []          # [(nw1,subnet1), (nw2,subnet2) ...]
 verbose = False
@@ -70,37 +73,31 @@ STOP = 0
 #
 # Logging
 #
-LOG_FILENAME = "netflow_collector.out"
+LOG_FILENAME = "netflow_collector.log"
 LOG_LEVELS = {'debug'       :logging.DEBUG,\
                   'info'    :logging.INFO, \
                   'warning' : logging.WARNING, \
                   'error'   : logging.ERROR, \
                   'critical': logging.CRITICAL }
 
-              
-logger = logging.getLogger('NCLogger')
-logger.setLevel(LOG_LEVELS[params['log']])
-log_handler = logging.handlers.RotatingFileHandler(LOG_FILENAME, maxBytes=100, backupCount=5)
+logger = logging.getLogger('NCLogger')              
+logger.setLevel( LOG_LEVELS[ params['log'][0] ] )
+log_handler = logging.handlers.RotatingFileHandler(LOG_FILENAME, maxBytes=1000000, backupCount=5)
 logger.addHandler(log_handler)
-
-def debug(value, comment='', tag="None"):
-    global verbose
-    global verbose_tag
-    if verbose == True and (verbose_tag == tag or verbose_tag == "all"):
-        print "[DEBUG %s] %s" % (comment, value)
-
+#formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+#logger.addHandler(formatter)
+    
 class Signalled(Exception):
     # Finalize queue_netflow
-    debug("Signalled occured", tag="signal")
-
+    logger.critical("Exit signal occurred")
 
 def sigBreak(signum, f):
     global STOP
     LOCK.acquire()
     STOP = 1
     LOCK.release()
-    debug("Raise Signalled", tag="signal")
     raise Signalled
+
 
 class Netflow_Parser(SocketServer.BaseRequestHandler):
     """
@@ -120,7 +117,6 @@ class Netflow_Parser(SocketServer.BaseRequestHandler):
         if TF == True:
             queue_netflow.put(data)
             recvCount = recvCount + 1
-
         else:
             logger.error("Received Wrong Netflow Record from %s" % self.client_address[0])
             logger.error("Data:\n%x" % data)
@@ -157,7 +153,6 @@ class Netflow_Analyzer(Thread):
                 # Find slot
                 ((slot,netmask), direction) = self.getSlot(flow['saddr'], flow['daddr'])
                 if slot == False:
-                    debug(direction)
                     continue
 
                 # Find slot index
@@ -165,21 +160,18 @@ class Netflow_Analyzer(Thread):
                 if direction == UPLINK:
                     index = toInt(bitwiseAND(flow['saddr'], netmask))
                     
-                    debug(index, "UPLINK")
                 else:
                     index = toInt(bitwiseAND(flow['daddr'], netmask))
-                    debug(index, "DOWNLINK")
-                debug(index, "Slot index",tag="backup")
                 timeline = slot[index]
 
                 # Find timeline
                 (timeline_index, stime) = self.getTimeline(flow['stime'], header['SysUpTime'], header['EpochSeconds'])
 
-                debug(timeline_index, "Timeline_index", tag="parse")
+                #debug(timeline_index, "Timeline_index", tag="parse")
                 
                 # TEST
                 if timeline_index > NUM_OF_TIMELINE_INDEX:
-                    debug(timeline_index, "Timeline Index Overflow", tag="parse")
+                    logger.error("Timeline Index Overflow : %s" % timeline_index)
 
                 # Find link
                 links = timeline[timeline_index]
@@ -216,7 +208,9 @@ class Netflow_Analyzer(Thread):
         result = "%s(%d) -(%d)-> %s(%d) from %s to %s, pcount:%d, bcount:%d" % (
             socket.inet_ntoa(d['saddr']), d['sport'], d['protocol'], socket.inet_ntoa(d['daddr']), d['dport'], \
                 d['stime'], d['etime'], d['pcount'], d['bcount'])
-        debug(result, "Record")
+        #debug(result, "Record")
+        #logging.debug(result)
+
         return d
 
     def getSlot(self, saddr, daddr):
@@ -241,7 +235,7 @@ class Netflow_Analyzer(Thread):
 
 class Backup_Manager(Thread):
     def run(self):
-        debug("Start Netflow Backup Manager....",tag="backup")
+        logging.info("Start Netflow Backup Manager....")
 
         self.backup_timeline_index = 0
         # data is backup from backup_timeline_index to current_timeline_index
@@ -270,15 +264,15 @@ class Backup_Manager(Thread):
                 update_timeline_index = local_backup_timeline_index + (BACKUP_PERIOD / (5*60)) 
 
 
-                debug("Check %s->%s in %s(outer)" % (local_backup_timeline_index, update_timeline_index, current_timeline_index), "backup time index", tag="backup")
+                #debug("Check %s->%s in %s(outer)" % (local_backup_timeline_index, update_timeline_index, current_timeline_index), "backup time index", tag="backup")
 
                 final_index = current_timeline_index - (SAVE_PERIOD / (5*60))
                 while update_timeline_index <= final_index:
                 # Backup data
-                    debug("Backup: from (%s) to (%s)" % (local_backup_timeline_index, update_timeline_index), tag="backup")
+                    #debug("Backup: from (%s) to (%s)" % (local_backup_timeline_index, update_timeline_index), tag="backup")
  
                     filename = "%s/%s_%s" % (repos, self.get_time(local_backup_timeline_index), socket.inet_ntoa(network))
-                    debug(filename, "Open file to backup", tag="backup")
+                    #debug(filename, "Open file to backup", tag="backup")
                     fp = open(filename,'w')
                     for timeline in slot:
                         # backup for each timeline
@@ -301,7 +295,7 @@ class Backup_Manager(Thread):
             self.backup_timeline_index = new_backup % NUM_OF_TIMELINE_INDEX
             time.sleep(BACKUP_PERIOD)
             #time.sleep(60)
-            debug(time.localtime(), "wakeup", tag="backup")
+            #debug(time.localtime(), "wakeup", tag="backup")
             
     def backup(self, timeline, bti, fp, delta=12):
         # backup data in timeline (up, down link)
@@ -315,7 +309,7 @@ class Backup_Manager(Thread):
             fp.write(r_downlink)
             # free link
             timeline[(bti+index)%NUM_OF_TIMELINE_INDEX] = ([],[])
-            #debug((bti+index)%NUM_OF_TIMELINE_INDEX, "Free  timeline",tag="backup")
+            ##debug((bti+index)%NUM_OF_TIMELINE_INDEX, "Free  timeline",tag="backup")
 
     def get_flow_t(self, list, dir):
         # dir is direction (0: uplink, 1:downlink)
@@ -326,7 +320,7 @@ class Backup_Manager(Thread):
             daddr = socket.inet_ntoa(flow_t[1])
             result= result + "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n" % \
             (dir, saddr, daddr, flow_t[2], flow_t[3], flow_t[4], flow_t[5], flow_t[6], flow_t[7], flow_t[8])
-        #debug(result,"flow_t","backup")
+        ##debug(result,"flow_t","backup")
         return result
 
     def get_time(self, timeline_index):
@@ -342,7 +336,7 @@ class Backup_Manager(Thread):
 
         hour = time.strftime("%H%M", time.gmtime(timeline_index * 60 * 5))
         file_time = "%s%s" % (date, hour)
-        debug("%s %s" % (timeline_index, file_time), "filename", tag="backup")
+        #debug("%s %s" % (timeline_index, file_time), "filename", tag="backup")
         return file_time
 
 class ThreadedConsoleAPIHandler(SocketServer.BaseRequestHandler):
@@ -357,6 +351,7 @@ class ThreadedConsoleAPIHandler(SocketServer.BaseRequestHandler):
             return
         if tf == True and response == "exit":
             self.request.send(response)
+            sys.exit()
             return
         # General command API
         if tf == True:
@@ -367,90 +362,28 @@ class ThreadedConsoleAPIHandler(SocketServer.BaseRequestHandler):
         temp = data.split("\n")       # delete enter
         token = temp[0].split(" ")       # parse cmd
 
-        debug(token, tag="api")
+        if len(token) < 1:
+            return (False, "Null command")
+
+        logger.debug("ConsoleAPI cmd: %s" % token[0])
+        #debug(token, tag="api")
         if token[0] == "exit" or token[0] == "quit":
             # exit signal
-            return (True, "exit")
-
-        # show <IP> <Timestamp> <link> <limit>
-        if token[0] == "show":
-            nip = None
-            timestamp = None
-            link = -1
-            limit = 100000   # MAX result row
-            try:
-                nip = socket.inet_aton(token[1])
-                timestamp = long(token[2])
-                link = int(token[3])
-                limit = int(token[4])
-                if limit == 0:
-                    limit = 100000
-            except:
-                return (False, API_ERROR['IP'])
-
-            # get timeline Data
-            timeline = getTimeline(nip)
-
-            if timeline == False:
-                return (False, API_ERROR['no data'])
-            
-            # make result
-            r_index = (int(token[2]) % ONEDAY_SECOND) / TIMELINE_PERIOD         #requested index
-            c_index = (int(time.time()) % ONEDAY_SECOND) / TIMELINE_PERIOD      #current index
-            print r_index, c_index
-            # check next day
-            if c_index < r_index:
-                c_index = c_index + NUM_OF_TIMELINE_INDEX
-
-
-            result = []    
-            for index in range(c_index - r_index + 1):
-                fetch_index = (r_index + index) % NUM_OF_TIMELINE_INDEX
-                debug(fetch_index, tag="api")
-                (u_link, d_link) = timeline[ fetch_index ]
-
-                if link == 0 or link == -1:
-                    self.getIPbyTimestamp(u_link, timestamp, result)
-                if link == 1 or link == -1:
-                    self.getIPbyTimestamp(d_link, timestamp, result)
-                    
-            result.sort()
-            output = self.toString(result, limit)
-            debug(output, tag="api")
-        return (True, output)
-
-    def getIPbyTimestamp(self, link, timestamp, result):
-        for flow_t in link:
-            # output format [timestamp, saddr, sport, proto, daddr, dport, bcount, pcount]
-            if timestamp < flow_t[4]:
-                result.append([flow_t[4], flow_t[0], flow_t[6], flow_t[8], flow_t[1], flow_t[7], flow_t[3], flow_t[2]])
-
-    def toString(self, result, limit):
-        output = ""
-        global PROTO_DIC
-        count = len(result)
-        if len(result) > limit:
-            count = limit
-            
-        for index_t in range(count):
-            index = result[index_t]
-            # format: timestamp srcIP(srcPort)-(PROTO)->dstIP(dstPort) nBytes nPacket
-            print "index", index, len(index)
-            output = output + "%s %s(%s)-%s->%s(%s) %s %s\n" % \
-                     (index[0],socket.inet_ntoa(index[1]), index[2], PROTO_DIC[index[3]], \
-                      socket.inet_ntoa(index[4]), index[5], index[6], index[7])
-        print output    
-        return output     
-                                                               
-                                                               
-                                                               
+            dump_DataStructure()
+            logger.info("Exit is called")
+            return (True, "Dumpdata and exit")
+        elif token[0] == "show":
+            showDataStructure()
+            return (True, "Show DataStructure")
+        else:
+            return (False, "Wrong cmd: %s" % token[0])
                     
 class ThreadedConsleAPI(SocketServer.ThreadingMixIn, SocketServer.TCPServer):
     pass
         
 class Console_Manager(Thread):
     def run(self):
-        debug("Start Console Manager....")
+        #debug("Start Console Manager....")
         while STOP == 0:
             cmd = raw_input("Console Manager(? help) >")
             self.parse_cmd(cmd)
@@ -554,16 +487,16 @@ def startAnalyzer():
     thr_console_manager = Console_Manager()
 
     # Netflow receiver
-    netflow_parser = SocketServer.UDPServer( (params['HOST'],params['netflow_port'] ), Netflow_Parser)
+    netflow_parser = SocketServer.UDPServer( (params['HOST'][0],params['netflow_port'][0] ), Netflow_Parser)
 
     # Console API
-    consoleAPI = ThreadedConsleAPI( (params['HOST'],params['console_port']) , ThreadedConsoleAPIHandler)
+    consoleAPI = ThreadedConsleAPI( (params['HOST'][0],params['console_port'][0]) , ThreadedConsoleAPIHandler)
     consoleAPIthread = threading.Thread(target=consoleAPI.serve_forever)
     consoleAPIthread.setDaemon(True)
     consoleAPIthread.start()
 
     # Chart API
-    webAPI = ThreadedHTTPServer( (params['HOST'], params['api_port']), Web_Handler)
+    webAPI = ThreadedHTTPServer( (params['HOST'][0], params['chart_port'][0]), Web_Handler)
     webAPIThread = threading.Thread(target=webAPI.serve_forever)
     webAPIThread.setDaemon(True)
     webAPIThread.start()
@@ -579,37 +512,37 @@ def startAnalyzer():
         signal.pause()
     except Signalled:
         #netflow_parser.socket.close()
-        debug("exept Singall 1", tag="signal")
+        #debug("exept Singall 1", tag="signal")
         netflow_parser.server_close()
-        debug("except Signall 2" , "server_close", tag="signal")
+        #debug("except Signall 2" , "server_close", tag="signal")
         
         # send Null data to Queue for last computation of queue_netflow
         queue_netflow.put(False)
-        debug("except signall 3", "end of queue", tag="signal")
+        #debug("except signall 3", "end of queue", tag="signal")
 
         # shutdown consoleAPI server
         #consoleAPIthread.shutdown()        
 
     # join
         
-    debug("wait Before Join", tag="signal")
+    #debug("wait Before Join", tag="signal")
     thr_netflow_analyzer.join()
-    debug("thr_netflow_analyzer joined", tag="signal")
+    #debug("thr_netflow_analyzer joined", tag="signal")
 
 
     thr_console_manager.join()
-    debug("thr_console_manager joined", tag="signal")
+    #debug("thr_console_manager joined", tag="signal")
 
     thr_backup_manager.join(timeout=10)    
-    debug("thr_backup_manager joined", tag="signal")
+    #debug("thr_backup_manager joined", tag="signal")
 
 
     consoleAPIthread.join(timeout=10)
-    debug("consoleAPIthread joined", tag="signal")
+    #debug("consoleAPIthread joined", tag="signal")
     
     dump_DataStructure()
     queue_netflow.join()
-    debug("finish join", tag="signal")
+    #debug("finish join", tag="signal")
     return
 
 def initDataStructure(restore=False):
@@ -620,10 +553,11 @@ def initDataStructure(restore=False):
 
     if restore == True:
         # restore data from dump
-        global dump_file
+        logging.info("Loading dump file:%s" % dump_file)
         file = open(dump_file, 'rb')
         DataStructure = pickle.load(file)
         file.close()
+        pprint.pprint(DataStructure)
         return
     
     for (nw,subnet) in network:
@@ -644,13 +578,11 @@ def initDataStructure(restore=False):
 
         # assign slot to DataStructure
         DataStructure[nw] = (slot,NETMASK[subnet])
-        debug(socket.inet_ntoa(nw), "Add DataStructure")
+        #debug(socket.inet_ntoa(nw), "Add DataStructure")
 
 def dump_DataStructure():
     # Dump DataStructure with pickle dump
-    global dump_file
     file = open(dump_file, 'wb')
-    global DataStructure
     pickle.dump(DataStructure, file)
     file.close()
 
@@ -664,7 +596,7 @@ def parse_config(fname):
     # parse configure file
     # return cofig dictionary
     global params
-
+    
     fp = open(fname,'r')
     config = {}
     for index in fp:
@@ -673,31 +605,33 @@ def parse_config(fname):
             continue
         line = index.split("\n")
         content = line[0].split(" ")
+
+        logging.info("Add config:" % line)
         # content[0] is keyword
         # content[1:] is param values
-        if len(content) == 2:
+        
+        
+
+        if len(content) >= 2:
             # keyword value
             # value can be integer or string
             try:
                 # integer value 
-                params[content[0]] = int(content[1])
+                params[content[0]] = [int(content[1])]
             except:
                 # string value
-                params[content[0]] = content[1]
-        elif len(content) > 2:
-            # one more values 
-            config[content[0]] = content[1:]
-
+                params[content[0]] = content[1:]
         else:
             # wrong configuration
-            print content
+            logging.error("Wrong config file content: " % line)
 
+    print params
 
 def init():
     parser = OptionParser()
     parser.add_option("-c", "--config", dest="config", help="Load Configure file") 
-    parser.add_option("-v", "--verbose", dest="verbose", help="Debug options")
-
+    parser.add_option("-v", "--verbose", dest="verbose", help="Debug options(debug|info|warning|error|critical)")
+    parser.add_option("-r", "--restore", dest="restore", action="store_true", help="Restore DataStructure from dump file")
     global params
     (options, args) = parser.parse_args()
 
@@ -705,16 +639,24 @@ def init():
     global verbose_tag
     global network
     
-    if options.verbose:
-        verbose = True
-        verbose_tag = options.verbose
-
     if options.config:
         parse_config(options.config)
+        
+    if options.verbose:
+        print "Logging options: %s" % options.verbose
+        logger.setLevel( LOG_LEVELS[options.verbose] )
+        log_handler2 = logging.StreamHandler()
+        logger.addHandler(log_handler2)
+        #formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        #logger.addHandler(formatter)
+
     else:
-        # wrong start
-        # print help
-        exit
+        logger.setLevel( LOG_LEVELS[ params['log'][0] ] )
+        log_handler = logging.handlers.RotatingFileHandler(LOG_FILENAME, maxBytes=100, backupCount=5)
+        logger.addHandler(log_handler)
+        #formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        #logger.addHandler(formatter)
+
 
     # networks config
     networks = params['network']
@@ -722,7 +664,7 @@ def init():
         network.append( add_network(nw) )
             
     # Init DataStruct
-    initDataStructure(restore=options.restore)
+    initDataStructure(options.restore)
         
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, sigBreak)
