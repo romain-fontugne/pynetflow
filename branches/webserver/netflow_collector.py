@@ -9,6 +9,7 @@
 #
 
 import sys
+import os
 import logging
 import logging.handlers
 import time
@@ -46,8 +47,12 @@ SIZE_OF_RECORD = 48   # Netflow v5 record size
 NUM_OF_TIMELINE_INDEX = 288     # 5 minute slot (86400 / 60*5)
 UPLINK = 0            # UPLINK of timeline 
 DOWNLINK = 1          # DOWNLINK of timeline
-dump_file = "/tmp/pynetflow.pkl"
 recvCount = 0           # recved netflow count from sensor
+
+LOG_FILENAME = "/var/log/netflow_collector.log"
+dump_file = "/tmp/pynetflow.pkl"
+tbs_pid = "/tmp/tbs.pid"
+tbs_backup = "/tmp/tbs_bakup"
 
 NETMASK = {0: socket.inet_aton("255.255.255.255"),
            8: socket.inet_aton("0.255.255.255"),
@@ -73,7 +78,7 @@ STOP = 0
 #
 # Logging
 #
-LOG_FILENAME = "netflow_collector.log"
+
 LOG_LEVELS = {'debug'       :logging.DEBUG,\
                   'info'    :logging.INFO, \
                   'warning' : logging.WARNING, \
@@ -394,8 +399,8 @@ class Console_Manager(Thread):
             # ex) plot 10.1.1.2
             self.plot(token[1])
 
-        elif token[0] == "stat":
-            self.stat()
+        elif token[0] == "show":
+            showDataStructure()
             
     def plot(self, ip):
         # plot graph of ip
@@ -632,6 +637,7 @@ def init():
     parser.add_option("-c", "--config", dest="config", help="Load Configure file") 
     parser.add_option("-v", "--verbose", dest="verbose", help="Debug options(debug|info|warning|error|critical)")
     parser.add_option("-r", "--restore", dest="restore", action="store_true", help="Restore DataStructure from dump file")
+
     global params
     (options, args) = parser.parse_args()
 
@@ -666,8 +672,16 @@ def init():
     # Init DataStruct
     initDataStructure(options.restore)
         
+def registerPID():
+    fp = open(tbs_pid, "w")
+    pid = os.getpid()
+    fp.write(str(pid))
+    fp.close()
+
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, sigBreak)
+
+    registerPID()
     # Data Struct Initialize
     init()
     # Netflow collection & Analyzer
