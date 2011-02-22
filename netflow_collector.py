@@ -10,6 +10,7 @@
 
 import sys
 import os
+import re
 import logging
 import logging.handlers
 import time
@@ -52,7 +53,7 @@ recvCount = 0           # recved netflow count from sensor
 LOG_FILENAME = "/var/log/netflow_collector.log"
 dump_file = "/tmp/pynetflow.pkl"
 tbs_pid = "/tmp/tbs.pid"
-tbs_backup = "/tmp/tbs_bakup"
+tbs_backup = "/var/log/tbs_bakup.log"
 
 NETMASK = {0: socket.inet_aton("255.255.255.255"),
            8: socket.inet_aton("0.255.255.255"),
@@ -167,6 +168,7 @@ class Netflow_Analyzer(Thread):
                     
                 else:
                     index = toInt(bitwiseAND(flow['daddr'], netmask))
+
                 timeline = slot[index]
 
                 # Find timeline
@@ -239,6 +241,13 @@ class Netflow_Analyzer(Thread):
 
 
 class Backup_Manager(Thread):
+    def __init__(self):
+        Thread.__init__(self)
+        self.logfp = None
+        self.logDB = {}
+        self.initLogFile()
+
+
     def run(self):
         logging.info("Start Netflow Backup Manager....")
 
@@ -269,22 +278,26 @@ class Backup_Manager(Thread):
                 update_timeline_index = local_backup_timeline_index + (BACKUP_PERIOD / (5*60)) 
 
 
-                #debug("Check %s->%s in %s(outer)" % (local_backup_timeline_index, update_timeline_index, current_timeline_index), "backup time index", tag="backup")
-
                 final_index = current_timeline_index - (SAVE_PERIOD / (5*60))
                 while update_timeline_index <= final_index:
                 # Backup data
                     #debug("Backup: from (%s) to (%s)" % (local_backup_timeline_index, update_timeline_index), tag="backup")
  
                     filename = "%s/%s_%s" % (repos, self.get_time(local_backup_timeline_index), socket.inet_ntoa(network))
-                    #debug(filename, "Open file to backup", tag="backup")
-                    fp = open(filename,'w')
-                    for timeline in slot:
-                        # backup for each timeline
-                        self.backup(timeline, local_backup_timeline_index, fp)
-                        new_backup = local_backup_timeline_index + 12
-                    # close file for network
-                    fp.close()
+
+                    if self.AlreadyBackuped(filename) == True:
+                        pass
+
+                    else:
+                        logger.info("backup logging:%s" % filename)
+                        #debug(filename, "Open file to backup", tag="backup")
+                        fp = open(filename,'w')
+                        for timeline in slot:
+                        # backup  for each timeline
+                            self.backup(timeline, local_backup_timeline_index, fp)
+                            new_backup = local_backup_timeline_index + 12
+                            # close file for network
+                            fp.close()
                     # update backup_timeline_index
                     #self.backup_timeline_index = update_timeline_index % NUM_OF_TIMELINE_INDEX
                     local_backup_timeline_index = update_timeline_index
@@ -298,9 +311,9 @@ class Backup_Manager(Thread):
 
             # End of each network backup
             self.backup_timeline_index = new_backup % NUM_OF_TIMELINE_INDEX
+            # update /tmp/tbs.backup
+            
             time.sleep(BACKUP_PERIOD)
-            #time.sleep(60)
-            #debug(time.localtime(), "wakeup", tag="backup")
             
     def backup(self, timeline, bti, fp, delta=12):
         # backup data in timeline (up, down link)
@@ -344,6 +357,34 @@ class Backup_Manager(Thread):
         #debug("%s %s" % (timeline_index, file_time), "filename", tag="backup")
         return file_time
 
+    def initLogFile(self):
+        logfp = open(tbs_backup, "r")
+        for line in logfp:
+            temp0 = line.split("\n")
+            temp = temp0[0].split(" ")
+
+            if len(temp) < 2:
+                logger.error("wrong log:%s" % line)
+                continue
+            self.logDB[temp[1]] = temp[0]
+        logfp.close()
+
+            
+    def AlreadyBackuped(self, logfile):
+
+        self.logfp = open(tbs_backup, "a")
+        # check 
+        if self.logDB.has_key(logfile):
+            logger.info("Already backuped logfile:%s" % logfile)
+            return True
+        # else
+        # log to logDB and logfp
+        now = time.strftime("%Y:%m:%d", time.localtime())
+        self.logfp.write("%s %s\n" % (now, logfile) )
+        self.logDB[logfile] = now
+        self.logfp.close()
+
+
 class ThreadedConsoleAPIHandler(SocketServer.BaseRequestHandler):
     def handle(self):
         data = self.request.recv(1024)
@@ -378,52 +419,14 @@ class ThreadedConsoleAPIHandler(SocketServer.BaseRequestHandler):
             logger.info("Exit is called")
             return (True, "Dumpdata and exit")
         elif token[0] == "show":
-            showDataStructure()
-            return (True, "Show DataStructure")
+            output = report('Bps')
+            return (True, output)
         else:
             return (False, "Wrong cmd: %s" % token[0])
                     
 class ThreadedConsleAPI(SocketServer.ThreadingMixIn, SocketServer.TCPServer):
     pass
         
-class Console_Manager(Thread):
-    def run(self):
-        #debug("Start Console Manager....")
-        while STOP == 0:
-            cmd = raw_input("Console Manager(? help) >")
-            self.parse_cmd(cmd)
-
-    def parse_cmd(self, cmd):
-        token = cmd.split(" ")
-        if token[0] == "plot":
-            # ex) plot 10.1.1.2
-            self.plot(token[1])
-
-        elif token[0] == "show":
-            showDataStructure()
-            
-    def plot(self, ip):
-        # plot graph of ip
-
-        nip = socket.inet_aton(ip)
-        timeline = getTimeline(nip)
-        if timeline == False:
-            # error
-            return
-        # draw line
-        d_uplink = []
-        d_downlink = []
-        for (uplink, downlink) in timeline:
-            d_uplink.append(getBytesFromLink(uplink))
-            d_downlink.append(0 - getBytesFromLink(downlink))
-        print "Uplink", d_uplink
-        print "Downlink", d_downlink
-            
-    def stat(self):
-        global DataStructure
-        for slot in DataStructure.keys():
-            print slot
-             
 # Web Server for graphics
 class Web_Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -454,6 +457,10 @@ class Web_Handler(BaseHTTPRequestHandler):
                 self.wfile.write(result_str)
                 return
 
+            elif cht == "show":
+                result = report()
+                self.wfile.write(result)
+                return
                 
         except IOError:
             self.send_error(404,"File Not Found: %s" % self.path)
@@ -489,7 +496,6 @@ def startAnalyzer():
     # Analyzer
     thr_netflow_analyzer = Netflow_Analyzer()
     thr_backup_manager = Backup_Manager()
-    thr_console_manager = Console_Manager()
 
     # Netflow receiver
     netflow_parser = SocketServer.UDPServer( (params['HOST'][0],params['netflow_port'][0] ), Netflow_Parser)
@@ -509,7 +515,6 @@ def startAnalyzer():
     # start Thread first
     thr_netflow_analyzer.start()
     thr_backup_manager.start()
-    thr_console_manager.start()
 
     # signal
     try:
@@ -534,9 +539,6 @@ def startAnalyzer():
     thr_netflow_analyzer.join()
     #debug("thr_netflow_analyzer joined", tag="signal")
 
-
-    thr_console_manager.join()
-    #debug("thr_console_manager joined", tag="signal")
 
     thr_backup_manager.join(timeout=10)    
     #debug("thr_backup_manager joined", tag="signal")
@@ -570,7 +572,7 @@ def initDataStructure(restore=False):
         # init default slot (NUM_OF_TIMELINE_INDEX)
         # make slot per network
         slot = []
-        for index in range(ip+1):
+        for index in range(ip):
             # make timeline 
             timeline = []
             for slot_index in range(NUM_OF_TIMELINE_INDEX):
