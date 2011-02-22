@@ -24,6 +24,8 @@ hoursFmt = DateFormatter('%H')
 
 DataStructure = {}
 
+FLOW_INDEX = {'saddr':0, 'daddr':1, 'pcount':2, 'bcount':3, 'stime':4, 'elapse':5, 'sport':6, 'dport':7, 'protocol':8}
+
 """
 The Component of DataStructure
 1) network
@@ -48,31 +50,58 @@ ONEDAY_SECOND = 86400 # 60 second * 60 minute * 24 hours
 TIMELINE_PERIOD = 300 # 60 second * 5 minute
 NUM_OF_TIMELINE_INDEX = 288
 
-def showDataStructure():
+def showDataStructure(type='bcount', interval=24):
     # display DataStructure
-    print "=" * 30 + " show DataStructure " + "="*30
-    print "\tIP\t Uplink(Bytes) \t Downlink(Bytes)"
-    print "-" * 70
-
-    ipCount = 0
+    # "time" : [10:00, 10:05, 10:10, ... list of time]
+    # "10.1.1.1" : ( [1,2,3,10, ... Bytes], [2,3,1,2, ... Bytes] )
+    # "10.1.1.2" : ( [...], [...] )
+    # "10.1.1.3" : ( [...], [...] )
+    time = []
+    result = {}
     for key in DataStructure.keys():
         # for slot
         (slot, subnet) = DataStructure[key]
-        nip = key
-
-        result = []
+        ip = socket.inet_ntoa(key)
+        
+        intip = DottedIPToInt(ip)
+        ipCount = 0
         # bytes sum
+        print "IP:%s Num of slot:%s" %(ip,  len(slot))
         for timeline in slot:
-            a = b = 0
-            for (ulink, dlink) in timeline:
-                a = a + getBytesFromLink(ulink)
-                b = b + getBytesFromLink(dlink)
-            result.append((a,b))
-
-            # TEST print
-            print ipCount,a,b
+            # retreive wanted data
+            (x, yu, yd) = getTimelineData(timeline, type, interval)
+            myip = IntToDottedIP(intip + ipCount)
+            # "10.1.1.1", ([list of uplink Bytes], [list of downlink Bytes])
+            time = x
+            result[myip] = ( yu, yd )
+            # next ip
             ipCount = ipCount + 1
+    return (time, result)
 
+def report(chart='Bps', interval=24):
+    #chart = Bps|Pps
+    #type = bcount|pcount
+    type = ''
+    if chart == 'Bps':
+        type='bcount'
+    elif chart == 'Pps':
+        type='pcount'
+    else:
+        return "Wrong request: (%s) - chart must be Bps or Pps" % chart
+
+    (xaxis,result) = showDataStructure(type, interval)
+    output = "ip\t(sum): %s\n" % reduce(lambda x,y:x+" "+y, xaxis)
+    key = result.keys()
+    key.sort()
+    for ip in key:
+        (ulink, dlink) = result[ip]
+        output = output + "%s uplink   (%s) : %s\n" % (ip, reduce(lambda x,y: x+y, ulink), map(lambda x: x/300, ulink) )
+        output = output + "%s downlink (%s) : %s\n" % (ip, reduce(lambda x,y: x+y, dlink), map(lambda x: x/300, dlink) )
+    return output
+
+        
+        
+        
 def getSlot(ip):
     # param ip: network order
     # return Slot from DataStructure
@@ -120,7 +149,7 @@ def bitwiseOR(a,b):
 
 def toInt(bytes):
     # convert 4 bytes string to integer
-    return (ord(bytes[0]) << 24) + (ord(bytes[1]) << 16) + (ord(bytes[2]) < 8) + (ord(bytes[3]))
+    return (ord(bytes[0]) << 24) + (ord(bytes[1]) << 16) + (ord(bytes[2]) << 8) + (ord(bytes[3]))
     
 def getBytesFromLink(link):
     # retrieve data from link
@@ -250,8 +279,32 @@ def cht_log(content):
 
     return output
 
+def getTimelineData(timeline, type='bcount', interval = 24):
+    # retreive flow data from timeline
+    ctil = cur_TIL()
+    time_x = []
+    y_ulink = []
+    y_dlink = []
+    tindex = ctil - interval
+    for index in range(interval):
+        # xlabel
+        tindex = ( tindex + 1 ) % NUM_OF_TIMELINE_INDEX
+        time_x.append(getDate(tindex))
+        # yvalue
+        (ulink, dlink) = timeline[tindex] 
+        y_ulink.append(getFlowData(ulink, type))
+        y_dlink.append(getFlowData(dlink, type))
 
+    return (time_x, y_ulink, y_dlink)
 
+def getFlowData(link, type='bcount'):
+    # retreive data from flow_t
+    result = 0
+    for index in link:
+        value = index[FLOW_INDEX[type]]
+        result = result + value
+    return result
+    
 def getIPbyTimestamp(link, timestamp, result):
     for flow_t in link:
         # output format [timestamp, saddr, sport, proto, daddr, dport, bcount, pcount]
@@ -275,3 +328,20 @@ def toString(result, limit):
     
     print "output:", output
     return output
+
+
+
+def IntToDottedIP( intip ):
+    octet = ''
+    for exp in [3,2,1,0]:
+        octet = octet + str(intip / ( 256 ** exp )) + "."
+        intip = intip % ( 256 ** exp )
+    return(octet.rstrip('.'))
+ 
+def DottedIPToInt( dotted_ip ):
+    exp = 3
+    intip = 0
+    for quad in dotted_ip.split('.'):
+        intip = intip + (int(quad) * (256 ** exp))
+        exp = exp - 1
+    return(intip)
