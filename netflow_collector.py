@@ -53,7 +53,7 @@ recvCount = 0           # recved netflow count from sensor
 LOG_FILENAME = "/var/log/netflow_collector.log"
 dump_file = "/tmp/pynetflow.pkl"
 tbs_pid = "/tmp/tbs.pid"
-tbs_backup = "/var/log/tbs_bakup.log"
+tbs_backup = "/var/log/tbs_backup.log"
 
 NETMASK = {0: socket.inet_aton("255.255.255.255"),
            8: socket.inet_aton("0.255.255.255"),
