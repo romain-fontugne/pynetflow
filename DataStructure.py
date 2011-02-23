@@ -196,7 +196,7 @@ def cht_timeline(type, ip):
 
         (start,end) = (ctil - 24, ctil)
         for index in range(end - start):
-            (uplink, downlink) = timeline[index]
+            (uplink, downlink) = timeline[start + index]
             d_uplink.append( (getBytesFromLink(uplink) / 300) )   # 300 second, Bps
             d_downlink.append( (getBytesFromLink(downlink) / 300))
 
