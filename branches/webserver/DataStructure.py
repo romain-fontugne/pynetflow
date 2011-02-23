@@ -179,6 +179,7 @@ def cht_timeline(type, ip):
     if type == "bcount":
         nip = socket.inet_aton(ip)
         timeline = getTimeline(nip)
+
         if timeline == False:
             # Return False
             return 
@@ -189,19 +190,13 @@ def cht_timeline(type, ip):
 
         x = [] # xtick
         timeCount =  ctil - 24            # 24 is 2 hour
-        for timeCount in range(ctil - 24, ctil +1, 6):
+        for timeCount in range(ctil - 25, ctil, 6):
             hour = getDate(timeCount)
             x.append(hour)
 
-        temp = 0
-        for (uplink, downlink) in timeline:
-            a = getBytesFromLink(uplink)
-            b = getBytesFromLink(downlink)
-            if a > 0 or b > 0:
-                print temp, getDate(temp), a,b
-            temp = temp + 1
-
-        for (uplink, downlink) in timeline[ctil - 24:ctil+1]:   # 24 is 2 hour
+        (start,end) = (ctil - 24, ctil)
+        for index in range(end - start):
+            (uplink, downlink) = timeline[index]
             d_uplink.append( (getBytesFromLink(uplink) / 300) )   # 300 second, Bps
             d_downlink.append( (getBytesFromLink(downlink) / 300))
 
