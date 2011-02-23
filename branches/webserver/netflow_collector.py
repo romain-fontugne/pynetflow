@@ -20,7 +20,12 @@ import threading
 import signal
 import struct
 import SocketServer
-import pickle, pprint                  # for dump & load (recovery process)
+
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
+
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 
 
