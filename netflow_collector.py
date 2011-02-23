@@ -374,19 +374,17 @@ class Backup_Manager(Thread):
 
             
     def AlreadyBackuped(self, logfile):
-
-        self.logfp = open(tbs_backup, "a")
         # check 
         if self.logDB.has_key(logfile) == True:
-            logger.info("Already backuped logfile:%s" % logfile)
-            self.logfp.close()
             return True
+
         else:
             # log to logDB and logfp
-            now = time.strftime("%Y:%m:%d", time.localtime())
-            self.logfp.write("%s %s\n" % (now, logfile) )
+            logfp = open(tbs_backup, "a")
+            now = time.strftime("%Y:%m:%d-%H:%M", time.localtime())
+            logfp.write("%s %s\n" % (now, logfile) )
             self.logDB[logfile] = now
-            self.logfp.close()
+            logfp.close()
             return False
 
 
