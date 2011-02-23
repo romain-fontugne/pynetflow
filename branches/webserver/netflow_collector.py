@@ -58,7 +58,7 @@ recvCount = 0           # recved netflow count from sensor
 
 dump_file = "/tmp/netflow_collector.pkl"
 nc_pid = "/tmp/netflow_collector.pid"
-nc_backup = "/var/log/netflow_colletor_backup.history"
+nc_backup = "/var/log/netflow_collector.backup"
 LOG_FILENAME = "/var/log/netflow_collector.log"
 
 NETMASK = {0: socket.inet_aton("255.255.255.255"),
@@ -358,7 +358,7 @@ class Backup_Manager(Thread):
         return file_time
 
     def initLogFile(self):
-        logfp = open(nc_backup, "r")
+        logfp = open(nc_backup, "a+")
         for line in logfp:
             temp0 = line.split("\n")
             temp = temp0[0].split(" ")
