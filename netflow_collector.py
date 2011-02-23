@@ -55,10 +55,11 @@ UPLINK = 0            # UPLINK of timeline
 DOWNLINK = 1          # DOWNLINK of timeline
 recvCount = 0           # recved netflow count from sensor
 
+
+dump_file = "/tmp/netflow_collector.pkl"
+nc_pid = "/tmp/netflow_collector.pid"
+nc_backup = "/var/log/netflow_colletor_backup.history"
 LOG_FILENAME = "/var/log/netflow_collector.log"
-dump_file = "/tmp/pynetflow.pkl"
-tbs_pid = "/tmp/tbs.pid"
-tbs_backup = "/var/log/tbs_backup.log"
 
 NETMASK = {0: socket.inet_aton("255.255.255.255"),
            8: socket.inet_aton("0.255.255.255"),
@@ -70,9 +71,6 @@ NETMASK = {0: socket.inet_aton("255.255.255.255"),
 API_ERROR = {"IP": "IP address is not correct format",
              "no data": "No data"
              }
-# Data Structure of Final Result
-#DataStructure = {}
-
 # Queue
 queue_netflow = Queue.Queue()
 
@@ -81,23 +79,22 @@ WORKING = True
 LOCK = threading.Lock()
 STOP = 0
 
-#
-# Logging
-#
-
+###########################
+# Logging (/var/log/...
+###########################
 LOG_LEVELS = {'debug'       :logging.DEBUG,\
                   'info'    :logging.INFO, \
                   'warning' : logging.WARNING, \
                   'error'   : logging.ERROR, \
                   'critical': logging.CRITICAL }
 
-logger = logging.getLogger('NCLogger')              
+logger = logging.getLogger('Netflow')              
 logger.setLevel( LOG_LEVELS[ params['log'][0] ] )
 log_handler = logging.handlers.RotatingFileHandler(LOG_FILENAME, maxBytes=1000000, backupCount=5)
+log_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+log_handler.setFormatter(log_formatter)
 logger.addHandler(log_handler)
-#formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-#logger.addHandler(formatter)
-    
+
 class Signalled(Exception):
     # Finalize queue_netflow
     logger.critical("Exit signal occurred")
@@ -202,11 +199,12 @@ class Netflow_Analyzer(Thread):
         # fix time to localtime zone
         #header['EpochSeconds'] = socket.ntohl(struct.unpack('I',packet[8:12])[0]) - (time.timezone)
         header['EpochSeconds'] = socket.ntohl(struct.unpack('I',packet[8:12])[0])
-
         
         return (header,packet[SIZE_OF_HEADER:])
 
     def parseRecord(self, record):
+        # record is netflow v5 header
+        # return flow_t dictionary
         d = {}
         d['saddr'] = record[0:4]
         d['daddr'] = record[4:8]
@@ -217,9 +215,9 @@ class Netflow_Analyzer(Thread):
         d['sport'] = socket.ntohs(struct.unpack('H',record[32:34])[0])
         d['dport'] = socket.ntohs(struct.unpack('H',record[34:36])[0])
         d['protocol'] = ord(record[38])
-        result = "%s(%d) -(%d)-> %s(%d) from %s to %s, pcount:%d, bcount:%d" % (
-            socket.inet_ntoa(d['saddr']), d['sport'], d['protocol'], socket.inet_ntoa(d['daddr']), d['dport'], \
-                d['stime'], d['etime'], d['pcount'], d['bcount'])
+        #result = "%s(%d) -(%d)-> %s(%d) from %s to %s, pcount:%d, bcount:%d" % (
+        #    socket.inet_ntoa(d['saddr']), d['sport'], d['protocol'], socket.inet_ntoa(d['daddr']), d['dport'], \
+        #        d['stime'], d['etime'], d['pcount'], d['bcount'])
         #debug(result, "Record")
         #logging.debug(result)
 
@@ -367,7 +365,7 @@ class Backup_Manager(Thread):
             temp = temp0[0].split(" ")
 
             if len(temp) < 2:
-                logger.error("wrong log:%s" % line)
+                logger.error("Wrong log history:%s" % line)
                 continue
             self.logDB[temp[1]] = temp[0]
         logfp.close()
@@ -419,8 +417,8 @@ class ThreadedConsoleAPIHandler(SocketServer.BaseRequestHandler):
         if token[0] == "exit" or token[0] == "quit":
             # exit signal
             dump_DataStructure()
-            logger.info("Exit is called")
-            return (True, "Dumpdata and exit")
+            logger.info("Exit command is called")
+            return (True, "Finished Dump : %s" % dump_file)
         elif token[0] == "show":
             output = report('Bps')
             return (True, output)
@@ -434,6 +432,8 @@ class ThreadedConsleAPI(SocketServer.ThreadingMixIn, SocketServer.TCPServer):
 class Web_Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
+            (caddr, cport) = self.client_address
+            logger.info("HTTP request from %s : %s" % (caddr, self.path))
             (rvalue, content) = self.parseURL(self.path) 
 
             if rvalue == 404:
@@ -564,11 +564,13 @@ def initDataStructure(restore=False):
     if restore == True:
         # restore data from dump
         logging.info("Loading dump file:%s" % dump_file)
+        print time.strftime("%H:%M:%S", time.localtime()), "Start loading Dumpfile...."
         file = open(dump_file, 'rb')
         DS = pickle.load(file)
         for key in DS.keys():
             DataStructure[key] = DS[key]
         file.close()
+        print time.strftime("%H:%M:%S", time.localtime()), "End of loading ...."
         return
     
     for (nw,subnet) in network:
@@ -594,9 +596,10 @@ def initDataStructure(restore=False):
 def dump_DataStructure():
     # Dump DataStructure with pickle dump
     file = open(dump_file, 'wb')
+    logger.info("Dumping Data ...")
     pickle.dump(DataStructure, file)
     file.close()
-
+    logger.info("Finished Dump ...")
 
 def add_network(nw):
     #config setting of monitoring network
@@ -636,7 +639,7 @@ def parse_config(fname):
             # wrong configuration
             logging.error("Wrong config file content: " % line)
 
-    print params
+    #print params
 
 def init():
     parser = OptionParser()
@@ -658,17 +661,9 @@ def init():
         print "Logging options: %s" % options.verbose
         logger.setLevel( LOG_LEVELS[options.verbose] )
         log_handler2 = logging.StreamHandler()
+        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        log_handler2.addFormatter(formatter)
         logger.addHandler(log_handler2)
-        #formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        #logger.addHandler(formatter)
-
-    else:
-        logger.setLevel( LOG_LEVELS[ params['log'][0] ] )
-        log_handler = logging.handlers.RotatingFileHandler(LOG_FILENAME, maxBytes=100, backupCount=5)
-        logger.addHandler(log_handler)
-        #formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        #logger.addHandler(formatter)
-
 
     # networks config
     networks = params['network']
