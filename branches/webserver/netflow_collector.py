@@ -661,7 +661,7 @@ def init():
         logger.setLevel( LOG_LEVELS[options.verbose] )
         log_handler2 = logging.StreamHandler()
         formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        log_handler2.addFormatter(formatter)
+        log_handler2.setFormatter(formatter)
         logger.addHandler(log_handler2)
 
     # networks config
