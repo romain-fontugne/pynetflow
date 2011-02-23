@@ -312,7 +312,6 @@ class Backup_Manager(Thread):
 
             # End of each network backup
             self.backup_timeline_index = new_backup % NUM_OF_TIMELINE_INDEX
-            # update /tmp/tbs.backup
             
             time.sleep(BACKUP_PERIOD)
             
@@ -359,7 +358,7 @@ class Backup_Manager(Thread):
         return file_time
 
     def initLogFile(self):
-        logfp = open(tbs_backup, "r")
+        logfp = open(nc_backup, "r")
         for line in logfp:
             temp0 = line.split("\n")
             temp = temp0[0].split(" ")
@@ -378,7 +377,7 @@ class Backup_Manager(Thread):
 
         else:
             # log to logDB and logfp
-            logfp = open(tbs_backup, "a")
+            logfp = open(nc_backup, "a")
             now = time.strftime("%Y:%m:%d-%H:%M", time.localtime())
             logfp.write("%s %s\n" % (now, logfile) )
             self.logDB[logfile] = now
@@ -674,7 +673,7 @@ def init():
     initDataStructure(options.restore)
         
 def registerPID():
-    fp = open(tbs_pid, "w")
+    fp = open(nc_pid, "w")
     pid = os.getpid()
     fp.write(str(pid))
     fp.close()
