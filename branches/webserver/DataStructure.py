@@ -56,11 +56,13 @@ def showDataStructure(type='bcount', interval=24):
     # "10.1.1.1" : ( [1,2,3,10, ... Bytes], [2,3,1,2, ... Bytes] )
     # "10.1.1.2" : ( [...], [...] )
     # "10.1.1.3" : ( [...], [...] )
+
     time = []
     result = {}
     for key in DataStructure.keys():
         # for slot
         (slot, subnet) = DataStructure[key]
+
         ip = socket.inet_ntoa(key)
         
         intip = DottedIPToInt(ip)
@@ -90,6 +92,8 @@ def report(chart='Bps', interval=24):
         return "Wrong request: (%s) - chart must be Bps or Pps" % chart
 
     (xaxis,result) = showDataStructure(type, interval)
+    #TEST
+    print xaxis
     output = "ip\t(sum): %s\n" % reduce(lambda x,y:x+" "+y, xaxis)
     key = result.keys()
     key.sort()

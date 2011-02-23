@@ -247,7 +247,6 @@ class Backup_Manager(Thread):
         self.logDB = {}
         self.initLogFile()
 
-
     def run(self):
         logging.info("Start Netflow Backup Manager....")
 
@@ -279,14 +278,13 @@ class Backup_Manager(Thread):
 
 
                 final_index = current_timeline_index - (SAVE_PERIOD / (5*60))
+
                 while update_timeline_index <= final_index:
-                # Backup data
-                    #debug("Backup: from (%s) to (%s)" % (local_backup_timeline_index, update_timeline_index), tag="backup")
- 
+                    # Backup data
                     filename = "%s/%s_%s" % (repos, self.get_time(local_backup_timeline_index), socket.inet_ntoa(network))
 
                     if self.AlreadyBackuped(filename) == True:
-                        pass
+                        logger.info("filename:%s is already backuped" % filename)
 
                     else:
                         logger.info("backup logging:%s" % filename)
@@ -297,7 +295,7 @@ class Backup_Manager(Thread):
                             self.backup(timeline, local_backup_timeline_index, fp)
                             new_backup = local_backup_timeline_index + 12
                             # close file for network
-                            fp.close()
+                        fp.close()
                     # update backup_timeline_index
                     #self.backup_timeline_index = update_timeline_index % NUM_OF_TIMELINE_INDEX
                     local_backup_timeline_index = update_timeline_index
@@ -374,15 +372,17 @@ class Backup_Manager(Thread):
 
         self.logfp = open(tbs_backup, "a")
         # check 
-        if self.logDB.has_key(logfile):
+        if self.logDB.has_key(logfile) == True:
             logger.info("Already backuped logfile:%s" % logfile)
+            self.logfp.close()
             return True
-        # else
-        # log to logDB and logfp
-        now = time.strftime("%Y:%m:%d", time.localtime())
-        self.logfp.write("%s %s\n" % (now, logfile) )
-        self.logDB[logfile] = now
-        self.logfp.close()
+        else:
+            # log to logDB and logfp
+            now = time.strftime("%Y:%m:%d", time.localtime())
+            self.logfp.write("%s %s\n" % (now, logfile) )
+            self.logDB[logfile] = now
+            self.logfp.close()
+            return False
 
 
 class ThreadedConsoleAPIHandler(SocketServer.BaseRequestHandler):
@@ -562,9 +562,10 @@ def initDataStructure(restore=False):
         # restore data from dump
         logging.info("Loading dump file:%s" % dump_file)
         file = open(dump_file, 'rb')
-        DataStructure = pickle.load(file)
+        DS = pickle.load(file)
+        for key in DS.keys():
+            DataStructure[key] = DS[key]
         file.close()
-        pprint.pprint(DataStructure)
         return
     
     for (nw,subnet) in network:
