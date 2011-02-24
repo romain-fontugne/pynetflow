@@ -80,27 +80,47 @@ def showDataStructure(type='bcount', interval=24):
             ipCount = ipCount + 1
     return (time, result)
 
-def report(chart='Bps', interval=24):
-    #chart = Bps|Pps
-    #type = bcount|pcount
-    type = ''
-    if chart == 'Bps':
-        type='bcount'
-    elif chart == 'Pps':
-        type='pcount'
-    else:
-        return "Wrong request: (%s) - chart must be Bps or Pps" % chart
+def summary(param):
+    # param
+    # type1: bcount|pcount
+    # type2: sum|detail
+    # interval: 24
 
-    (xaxis,result) = showDataStructure(type, interval)
-    #TEST
-    print xaxis
-    output = "ip\t(sum): %s\n" % reduce(lambda x,y:x+" "+y, xaxis)
+    # check parameters
+    if param.has_key('type1') == False or param.has_key('type2') == False or param.has_key('interval') == False:
+        return "Error of parameters : %s" % param
+
+    if param['type1'] != "bcount" and param['type1'] != "pcount":
+        return "Error of type1 parameter : %s" % param
+    if param['type2'] != "sum" and param['type2'] != "detail":
+        return "Error of type2 parameter : %s" % param
+    if int(param['interval']) <= 0 and int(param['interval']) > 24:
+        return "Error of interval parameter : %s" % param
+
+    (xaxis,result) = showDataStructure(param['type1'], int(param['interval']) )
+
+    # x axis
     key = result.keys()
-    key.sort()
-    for ip in key:
-        (ulink, dlink) = result[ip]
-        output = output + "%s uplink   (%s) : %s\n" % (ip, reduce(lambda x,y: x+y, ulink), map(lambda x: x/300, ulink) )
-        output = output + "%s downlink (%s) : %s\n" % (ip, reduce(lambda x,y: x+y, dlink), map(lambda x: x/300, dlink) )
+    ips = map(DottedIPToInt, key)
+    ips.sort()
+    output = ""
+    if param['type2'] == "sum":
+        output = "IP\tUplink\tDownlink of Sum\n"
+        for ip in ips:
+            strip = IntToDottedIP(ip)
+            (ulink, dlink) = result[strip]
+            output = output + "%s %s %s\n" % (strip, reduce(lambda x,y: x+y, ulink), reduce(lambda x,y:x+y, dlink) )
+
+    elif param['type2'] == "detail":
+        output = "IP\t%s\n" % reduce(lambda x,y: x+" "+y, xaxis)
+        for ip in ips:
+            strip = IntToDottedIP(ip)
+            (ulink, dlink) = result[strip]
+            output = output + "%s up %s\n" % (strip, reduce(lambda x,y: str(x)+" "+str(y), ulink) )
+            output = output + "%s dn %s\n" % (strip, reduce(lambda x,y: str(x)+" "+str(y), dlink) )
+    else:
+        output = "Error of parameters : %s" % param
+
     return output
 
         

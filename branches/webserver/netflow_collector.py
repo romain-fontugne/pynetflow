@@ -459,8 +459,8 @@ class Web_Handler(BaseHTTPRequestHandler):
                 self.wfile.write(result_str)
                 return
 
-            elif cht == "show":
-                result = report()
+            elif cht == "summary":
+                result = summary(content)
                 self.wfile.write(result)
                 return
                 
