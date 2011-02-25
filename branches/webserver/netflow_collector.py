@@ -460,10 +460,14 @@ class Web_Handler(BaseHTTPRequestHandler):
                 return
 
             elif cht == "summary":
-                result = summary(content)
+                result = cht_summary(content)
                 self.wfile.write(result)
                 return
-                
+            elif cht == "detail":
+                result = cht_detail(content)
+                self.wfile.write(result)
+                return
+
         except IOError:
             self.send_error(404,"File Not Found: %s" % self.path)
 

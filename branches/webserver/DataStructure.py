@@ -50,7 +50,7 @@ ONEDAY_SECOND = 86400 # 60 second * 60 minute * 24 hours
 TIMELINE_PERIOD = 300 # 60 second * 5 minute
 NUM_OF_TIMELINE_INDEX = 288
 
-def showDataStructure(type='bcount', interval=24):
+def showDataStructure(type1='bcount', interval=24):
     # display DataStructure
     # "time" : [10:00, 10:05, 10:10, ... list of time]
     # "10.1.1.1" : ( [1,2,3,10, ... Bytes], [2,3,1,2, ... Bytes] )
@@ -71,7 +71,7 @@ def showDataStructure(type='bcount', interval=24):
         print "IP:%s Num of slot:%s" %(ip,  len(slot))
         for timeline in slot:
             # retreive wanted data
-            (x, yu, yd) = getTimelineData(timeline, type, interval)
+            (x, yu, yd) = getTimelineData(timeline, type1, None, interval)
             myip = IntToDottedIP(intip + ipCount)
             # "10.1.1.1", ([list of uplink Bytes], [list of downlink Bytes])
             time = x
@@ -80,7 +80,7 @@ def showDataStructure(type='bcount', interval=24):
             ipCount = ipCount + 1
     return (time, result)
 
-def summary(param):
+def cht_summary(param):
     # param
     # type1: bcount|pcount
     # type2: sum|detail
@@ -123,6 +123,26 @@ def summary(param):
 
     return output
 
+def cht_detail(param):
+    # param
+    # ip : wanted ip address
+    # type1: bcount|pcount
+    # link : 0(uplink), 1(downlink), -1: both
+    # interval : 0 ~ 24
+    timeline = getTimeline( socket.inet_aton(param['ip']) )
+
+    if param.has_key('type2') == False:
+        param['type2'] = None
+    if param['type2'] == 'None':
+        param['type2'] = None
+
+    (x, y1, y2) = getTimelineData( timeline, type1=param['type1'], type2=param['type2'], interval=int(param['interval']) )
+    if param['link'] == "0":     #uplink
+        return ListToTable([x, y1])
+    elif param['link'] == "1":   #downlink
+        return ListToTable([x, y2])
+    else:                        # both
+        return ListToTable([x, y1, y2])
         
         
         
@@ -298,7 +318,7 @@ def cht_log(content):
 
     return output
 
-def getTimelineData(timeline, type='bcount', interval = 24):
+def getTimelineData(timeline, type1='bcount', type2=None, interval = 24):
     # retreive flow data from timeline
     ctil = cur_TIL()
     time_x = []
@@ -311,17 +331,37 @@ def getTimelineData(timeline, type='bcount', interval = 24):
         time_x.append(getDate(tindex))
         # yvalue
         (ulink, dlink) = timeline[tindex] 
-        y_ulink.append(getFlowData(ulink, type))
-        y_dlink.append(getFlowData(dlink, type))
+        y_ulink.append(getFlowData(ulink, type1, type2))
+        y_dlink.append(getFlowData(dlink, type1, type2))
 
     return (time_x, y_ulink, y_dlink)
 
-def getFlowData(link, type='bcount'):
+def getFlowData(link, type1='bcount', type2=None):
     # retreive data from flow_t
-    result = 0
+    result = ""
+    if type1 == 'pcount' or type1=='bcount':
+        result = 0L
+
     for index in link:
-        value = index[FLOW_INDEX[type]]
-        result = result + value
+        value = index[FLOW_INDEX[type1]]
+        value2 = None
+        if type2 != None:
+            wanted_list = type2.split(",")
+            wanted_result = []
+            for item in wanted_list:
+                wanted_result.append( str(index[FLOW_INDEX[item]]) )
+
+        if type(result) == long:
+            result = result + value
+        else:
+            if type1 == "saddr" or type1 == "daddr":
+                result = result + " " + socket.inet_ntoa(value)
+            else:
+                result = result + " " + str(value)
+
+            if type2 != None:
+                result = result + " " + ListToString(wanted_result)
+
     return result
     
 def getIPbyTimestamp(link, timestamp, result):
@@ -364,3 +404,19 @@ def DottedIPToInt( dotted_ip ):
         intip = intip + (int(quad) * (256 ** exp))
         exp = exp - 1
     return(intip)
+
+def ListToString(value):
+    return reduce(lambda x,y: str(x)+" "+str(y), value)
+
+def ListToTable( lists ):
+    # assum each list has same length
+    count = len(lists[0])
+    lenlist = len(lists)
+    output = ""
+    for index in range(count):
+        for index2 in lists:
+            output = output + str(index2[index]) + " "
+        output = output + "\n"
+
+    return output
+        
