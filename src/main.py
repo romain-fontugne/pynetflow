@@ -28,7 +28,7 @@ def main():
     global _options
     (_options, args) = parser.parse_args()
     
-    # Check Daemonize
+    # Check daemonize
     pid_filename = basename(__file__).split(".")[0]
     if _options.daemon:
         daemonize(pid_filename)
