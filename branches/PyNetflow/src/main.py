@@ -4,15 +4,18 @@ Created on 2011. 5. 5.
 @author: Son (chonho.son@gmail.com)
 '''
 from os.path import basename
-from Utils.Daemon import daemonize
 from optparse import OptionParser
+from ConfigParser import ConfigParser
 
+from Utils.Daemon import daemonize
+import Utils.Constants as Constants
 import time
 
 # Global variable
-_options = None
+#_options = None
+#_config = None
 
-def server():
+def server(config):
     while 1:
         print "daemon"
         time.sleep(1)
@@ -25,16 +28,21 @@ def main():
     parser.add_option("-d", "--daemon", dest="daemon", action="store_true", help="run as background daemon")
     parser.add_option("-v", "--verbose", dest="verbose", action="store_true")
     
-    global _options
-    (_options, args) = parser.parse_args()
+    (options, args) = parser.parse_args()
+    
+    # Config Parser
+    conf = Constants.CONF_FILE
+    if options.filename:
+        conf = options.filename
+    config = ConfigParser(conf)
     
     # Check daemonize
     pid_filename = basename(__file__).split(".")[0]
-    if _options.daemon:
+    if options.daemon:
         daemonize(pid_filename)
     
     # TODO: Call main procudure
-    server()
+    server(config)
     
 if __name__ == '__main__':
     main()
